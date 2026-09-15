@@ -1,0 +1,46 @@
+name: AmirBot Runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    # Keep each run below GitHub's maximum job duration and start another run periodically.
+    - cron: "*/350 * * * *"
+
+concurrency:
+  group: amirbot-runner
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Validate Python syntax
+        run: python -m py_compile AmirXProxy_single.py
+
+      - name: Run Telegram bot
+        env:
+          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ -z "$AMIRXPROXY_BOT_TOKEN" ]; then
+            echo "TELEGRAM_BOT_TOKEN GitHub Secret is missing."
+            exit 1
+          fi
+          python AmirXProxy_single.py
