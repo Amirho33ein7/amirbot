@@ -5,8 +5,8 @@ on:
   push:
     branches: [main]
   schedule:
-    # Keep each run below GitHub's maximum job duration and start another run periodically.
-    - cron: "*/350 * * * *"
+    # Start a fresh run every 6 hours; each job is capped below GitHub's 6-hour limit.
+    - cron: "0 */6 * * *"
 
 concurrency:
   group: amirbot-runner
