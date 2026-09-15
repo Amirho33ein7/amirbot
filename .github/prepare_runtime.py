@@ -9,10 +9,10 @@ OUTPUT = Path("/tmp/AmirXProxy_single_fixed.py")
 
 WATCHDOG = r'''
 
-# Runtime hardening: never let one source/search operation keep a Telegram
-# callback alive forever. The wrapper turns a stuck scan into a controlled
-# failure and keeps the polling loop healthy.
-def _with_search_timeout(bot, seconds: float = 45.0):
+# Runtime hardening: never let a Telegram scan callback remain pending
+# forever. This only controls cancellation/error handling; it does not
+# change the proxy discovery or validation logic itself.
+def _with_scan_timeout(bot, seconds: float = 45.0):
     import asyncio
     from functools import wraps
 
@@ -22,7 +22,7 @@ def _with_search_timeout(bot, seconds: float = 45.0):
             try:
                 return await asyncio.wait_for(func(*args, **kwargs), timeout=seconds)
             except asyncio.TimeoutError:
-                log.exception("Search handler timed out after %.1fs", seconds)
+                log.error("Scan handler timed out after %.1fs", seconds)
                 try:
                     call = args[0] if args else None
                     message = getattr(call, "message", None)
@@ -31,13 +31,13 @@ def _with_search_timeout(bot, seconds: float = 45.0):
                     chat_id = getattr(chat, "id", None)
                     if chat_id is not None and message_id is not None:
                         await bot.edit_message_text(
-                            "⏱️ بررسی منابع بیش از حد طول کشید.\n\n"
-                            "یکی از منابع پاسخ نداد و اسکن متوقف شد؛ دوباره تلاش کن.",
+                            "⏱️ بررسی بیش از حد طول کشید و متوقف شد.\n\n"
+                            "یکی از عملیات‌های شبکه پاسخ نداد. دوباره تلاش کن.",
                             chat_id=chat_id,
                             message_id=message_id,
                         )
-                except Exception:
-                    log.exception("Could not update timed-out search message")
+                except Exception as exc:
+                    log.warning("Could not update timed-out scan message: %s", exc)
                 return None
 
         return wrapped
@@ -66,23 +66,40 @@ def main() -> None:
         raise RuntimeError("build_bot() registration block was not found")
     fixed = fixed.replace(old, new, 1)
 
-    if "_with_search_timeout" not in fixed:
+    if "_with_scan_timeout" not in fixed:
         fixed = fixed.replace(
             "\n\n# ===== INLINED FROM AmirXProxy/",
             WATCHDOG + "\n\n# ===== INLINED FROM AmirXProxy/",
             1,
         )
 
-    search_match = re.search(r"^(\s*)async def new_search\(", fixed, flags=re.MULTILINE)
-    if search_match:
-        indent = search_match.group(1)
-        decorator = f"{indent}@_with_search_timeout(bot)\n"
-        line_start = search_match.start()
-        if fixed[line_start - len(decorator):line_start] != decorator:
-            fixed = fixed[:line_start] + decorator + fixed[line_start:]
-        print("Search watchdog installed for new_search().")
+    # The real user-facing scan handlers are handle_quantity() and
+    # handle_refresh(). Guard both, rather than looking for a nonexistent
+    # new_search() function.
+    for function_name in ("handle_quantity", "handle_refresh"):
+        search_match = re.search(
+            rf"^(\s*)async def {function_name}\(", fixed, flags=re.MULTILINE
+        )
+        if search_match:
+            indent = search_match.group(1)
+            decorator = f"{indent}@_with_scan_timeout(bot)\n"
+            line_start = search_match.start()
+            if fixed[line_start - len(decorator):line_start] != decorator:
+                fixed = fixed[:line_start] + decorator + fixed[line_start:]
+            print(f"Scan watchdog installed for {function_name}().")
+        else:
+            raise RuntimeError(f"Required scan handler {function_name}() was not found")
+
+    # Do not let the background scheduler grab _refresh_lock immediately at
+    # startup. Give normal Telegram commands first access; the scheduler then
+    # performs its regular periodic refresh.
+    old_loop = '''async def _loop() -> None:\n    interval = max(1, BACKGROUND_REFRESH_MINUTES) * 60\n    while True:'''
+    new_loop = '''async def _loop() -> None:\n    interval = max(1, BACKGROUND_REFRESH_MINUTES) * 60\n    await asyncio.sleep(interval)\n    while True:'''
+    if old_loop in fixed:
+        fixed = fixed.replace(old_loop, new_loop, 1)
+        print("Background refresh startup delay installed.")
     else:
-        print("WARNING: new_search() was not found; startup fix still applied.")
+        raise RuntimeError("Background scheduler loop pattern was not found")
 
     tree = ast.parse(fixed, filename=str(OUTPUT))
     function_names = {
@@ -90,7 +107,7 @@ def main() -> None:
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    required = set(names) | {"build_bot", "main"}
+    required = set(names) | {"build_bot", "main", "handle_quantity", "handle_refresh"}
     missing = sorted(required - function_names)
     if missing:
         raise RuntimeError(f"Runtime patch validation failed; missing: {missing}")
