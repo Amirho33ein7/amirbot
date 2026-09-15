@@ -28,7 +28,7 @@ def _with_scan_timeout(bot, seconds: float = 45.0):
                     if chat_id is not None and message_id is not None:
                         await bot.edit_message_text(
                             "⏱️ بررسی بیش از حد طول کشید و متوقف شد.\n\n"
-                            "یکی از عملیات‌های شبکه پاسخ نداد. دوباره تلاش کن.",
+                            "مرحلهٔ بررسی تعداد زیادی کاندید طولانی شد. دوباره تلاش کن.",
                             chat_id=chat_id,
                             message_id=message_id,
                         )
@@ -64,6 +64,34 @@ async def _bounded_collect_raw_candidates(sources=None, per_source_timeout: floa
             raw_candidates.extend(result)
     log.info("Bounded source scan: %d completed, %d cancelled, %d raw", len(done), len(pending), len(raw_candidates))
     return deduplicate(raw_candidates)
+'''
+
+VALIDATION_CAP_PATCH = r'''
+
+VALIDATION_CANDIDATE_CAP = 96
+
+
+def _cap_validation_candidates(candidates: list[Proxy]) -> list[Proxy]:
+    if len(candidates) <= VALIDATION_CANDIDATE_CAP:
+        return candidates
+    ordered = sorted(
+        candidates,
+        key=lambda p: (
+            int(getattr(p, "is_valid", False)),
+            int(getattr(p, "is_alive", False)),
+            int(getattr(p, "source_count", 1)),
+            float(getattr(p, "score", 0.0)),
+            float(getattr(p, "last_seen", 0.0)),
+        ),
+        reverse=True,
+    )
+    selected = ordered[:VALIDATION_CANDIDATE_CAP]
+    log.info(
+        "Validation cap applied: %d -> %d candidate(s)",
+        len(candidates),
+        len(selected),
+    )
+    return selected
 '''
 
 
@@ -103,6 +131,22 @@ def main() -> None:
         fixed = fixed[:start] + replacement + fixed[end:]
         fixed = fixed.replace(collector_marker, SOURCE_SCAN_HARDENING + collector_marker, 1)
 
+    if "VALIDATION_CANDIDATE_CAP = 96" not in fixed:
+        validation_marker = "\n\nasync def _revalidate_and_store(candidates: list[Proxy]) -> list[Proxy]:"
+        if validation_marker not in fixed:
+            raise RuntimeError("Validation hook anchor not found")
+        fixed = fixed.replace(
+            validation_marker,
+            VALIDATION_CAP_PATCH + validation_marker,
+            1,
+        )
+
+    old_revalidate = """async def _revalidate_and_store(candidates: list[Proxy]) -> list[Proxy]:\n    validated = await validate_all(candidates, MAX_CONCURRENT_CHECKS)\n    ranked = rank(validated)"""
+    new_revalidate = """async def _revalidate_and_store(candidates: list[Proxy]) -> list[Proxy]:\n    candidates = _cap_validation_candidates(candidates)\n    validated = await validate_all(candidates, MAX_CONCURRENT_CHECKS)\n    ranked = rank(validated)"""
+    if old_revalidate not in fixed:
+        raise RuntimeError("Validation function body pattern was not found")
+    fixed = fixed.replace(old_revalidate, new_revalidate, 1)
+
     for function_name in ("handle_quantity", "handle_refresh"):
         match = re.search(rf"^(\s*)async def {function_name}\(", fixed, flags=re.MULTILINE)
         if not match:
@@ -121,7 +165,7 @@ def main() -> None:
 
     tree = ast.parse(fixed, filename=str(OUTPUT))
     function_names = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    required = set(names) | {"build_bot", "main", "collect_raw_candidates", "_bounded_collect_raw_candidates", "handle_quantity", "handle_refresh"}
+    required = set(names) | {"build_bot", "main", "collect_raw_candidates", "_bounded_collect_raw_candidates", "_cap_validation_candidates", "handle_quantity", "handle_refresh"}
     missing = sorted(required - function_names)
     if missing:
         raise RuntimeError(f"Runtime patch validation failed; missing: {missing}")
@@ -129,6 +173,7 @@ def main() -> None:
     OUTPUT.write_text(fixed, encoding="utf-8")
     print(f"Prepared fixed runtime: {OUTPUT}")
     print("Registered handler groups: " + ", ".join(names))
+    print(f"Validation candidate cap: {96}")
 
 
 if __name__ == "__main__":
