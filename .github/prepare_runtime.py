@@ -45,6 +45,50 @@ def _with_scan_timeout(bot, seconds: float = 45.0):
     return decorator
 '''
 
+SOURCE_SCAN_HARDENING = r'''
+
+# Runtime hardening: isolate source fetches so one stuck source cannot hold
+# the whole collection stage indefinitely. Completed sources are kept; pending
+# ones are cancelled and treated as unavailable for this scan.
+async def _bounded_collect_raw_candidates(sources=None, per_source_timeout: float = 12.0):
+    active_sources = sources if sources is not None else get_enabled_sources()
+    if not active_sources:
+        log.warning("No enabled proxy sources are configured")
+        return []
+
+    log.info("Hardened source scan started across %d source(s)", len(active_sources))
+    tasks = {
+        asyncio.create_task(source.collect()): source
+        for source in active_sources
+    }
+    done, pending = await asyncio.wait(
+        tasks,
+        timeout=max(1.0, per_source_timeout),
+    )
+
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    raw_candidates = []
+    for task in done:
+        source = tasks[task]
+        try:
+            result = task.result()
+        except Exception as exc:
+            log.warning("Source '%s' failed during bounded scan: %s", source.name, exc)
+            continue
+        if isinstance(result, list):
+            raw_candidates.extend(result)
+
+    log.info(
+        "Hardened source scan finished: %d completed source(s), %d cancelled, %d raw candidate(s)",
+        len(done), len(pending), len(raw_candidates),
+    )
+    return deduplicate(raw_candidates)
+'''
+
 
 def main() -> None:
     source = SOURCE.read_text(encoding="utf-8")
@@ -72,6 +116,42 @@ def main() -> None:
             WATCHDOG + "\n\n# ===== INLINED FROM AmirXProxy/",
             1,
         )
+
+    # Replace the collection fan-out with a bounded version. This keeps the
+    # normal source/parser logic intact while preventing one network operation
+    # from holding the user-facing scan at the first progress stage forever.
+    if "_bounded_collect_raw_candidates" not in fixed:
+        anchor = "\n\n# ===== INLINED FROM AmirXProxy/repositories/proxy_repository.py ====="
+        if anchor not in fixed:
+            raise RuntimeError("Collector insertion anchor was not found")
+        fixed = fixed.replace(anchor, SOURCE_SCAN_HARDENING + anchor, 1)
+
+        collect_pattern = re.compile(
+            r"async def collect_raw_candidates\(sources: list\[Proxy\] \| None = None\) -> list\[Proxy\]:.*?\n\n# ===== INLINED FROM AmirXProxy/repositories/proxy_repository.py =====",
+            flags=re.DOTALL,
+        )
+        replacement = (
+            "async def collect_raw_candidates(sources: list[Proxy] | None = None) -> list[Proxy]:\n"
+            "    \"\"\"Collect candidates with a hard per-scan source timeout.\"\"\"\n"
+            "    return await _bounded_collect_raw_candidates(sources)\n\n"
+            "# ===== INLINED FROM AmirXProxy/repositories/proxy_repository.py ====="
+        )
+        fixed, replaced = collect_pattern.subn(replacement, fixed, count=1)
+        if replaced != 1:
+            raise RuntimeError(f"Collector function replacement failed: {replaced}")
+
+    # Prevent very large candidate sets from turning validation into an
+    # effectively unbounded wait. Keep a bounded work set while preserving
+    # the requested result size and the existing ranking/validation pipeline.
+    cap_marker = "async def _revalidate_and_store(candidates: list[Proxy]) -> list[Proxy]:\n    validated = await validate_all(candidates, MAX_CONCURRENT_CHECKS)"
+    cap_replacement = (
+        "async def _revalidate_and_store(candidates: list[Proxy]) -> list[Proxy]:\n"
+        "    validation_cap = max(TARGET_HEALTHY_POOL_SIZE * 4, MAX_RESULTS_PER_REQUEST * 8)\n"
+        "    candidates = candidates[:validation_cap]\n"
+        "    validated = await validate_all(candidates, MAX_CONCURRENT_CHECKS)"
+    )
+    if cap_marker in fixed and "validation_cap = max(TARGET_HEALTHY_POOL_SIZE * 4" not in fixed:
+        fixed = fixed.replace(cap_marker, cap_replacement, 1)
 
     # The real user-facing scan handlers are handle_quantity() and
     # handle_refresh(). Guard both, rather than looking for a nonexistent
@@ -107,7 +187,7 @@ def main() -> None:
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    required = set(names) | {"build_bot", "main", "handle_quantity", "handle_refresh"}
+    required = set(names) | {"build_bot", "main", "handle_quantity", "handle_refresh", "collect_raw_candidates", "_bounded_collect_raw_candidates"}
     missing = sorted(required - function_names)
     if missing:
         raise RuntimeError(f"Runtime patch validation failed; missing: {missing}")
