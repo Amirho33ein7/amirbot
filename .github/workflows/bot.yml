@@ -10,7 +10,7 @@ on:
 
 concurrency:
   group: amirbot-runner
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   run-bot:
@@ -60,6 +60,51 @@ jobs:
           bot = module.build_bot()
           print('Smoke test OK: build_bot() completed without exception.')
           print(f'Handler backends: {len(getattr(bot, "handlers", {}))}')
+          PY
+
+      - name: Verify Telegram API and reset webhook
+        env:
+          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          token = os.environ.get('AMIRXPROXY_BOT_TOKEN', '')
+          if not token:
+              raise SystemExit('Telegram token secret is empty.')
+
+          base = f'https://api.telegram.org/bot{token}'
+
+          def call(method, params=None):
+              url = f'{base}/{method}'
+              if params:
+                  url += '?' + urllib.parse.urlencode(params)
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  data = json.load(response)
+              if not data.get('ok'):
+                  raise SystemExit(f'{method} failed: {data}')
+              return data
+
+          me = call('getMe')['result']
+          print(f'Telegram API OK: @{me.get("username", "unknown")}')
+
+          webhook = call('getWebhookInfo')['result']
+          current_url = webhook.get('url', '')
+          if current_url:
+              print('Webhook detected; removing it before polling.')
+          else:
+              print('No webhook configured; polling can start directly.')
+
+          deleted = call('deleteWebhook', {'drop_pending_updates': 'false'})
+          print(f'Webhook reset OK: {deleted.get("result")}')
+
+          final_webhook = call('getWebhookInfo')['result']
+          if final_webhook.get('url'):
+              raise SystemExit('Webhook is still configured after deleteWebhook.')
+          print('Telegram polling preflight OK.')
           PY
 
       - name: Run Telegram bot
