@@ -1,15 +1,14 @@
-name: AmirBot Runner
+name: AmirFacts Runner
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
   schedule:
-    # Start a fresh run every 6 hours; each job is capped below GitHub's 6-hour limit.
-    - cron: "0 */6 * * *"
+    - cron: "0 8 * * *"
 
 concurrency:
-  group: amirbot-runner
+  group: amirfacts-runner
   cancel-in-progress: true
 
 jobs:
@@ -32,94 +31,68 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
-      - name: Validate original Python syntax
+      - name: Validate Python syntax
+        env:
+          AMIRXPROXY_BOT_TOKEN: TEST_TOKEN_FOR_CI
         run: python -m py_compile AmirXProxy_single.py
 
-      - name: Prepare fixed runtime and validate handlers
-        run: python .github/prepare_runtime.py
-
-      - name: Deep runtime self-tests
+      - name: Deep AmirFacts self-tests
         env:
-          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          AMIRXPROXY_BOT_TOKEN: TEST_TOKEN_FOR_CI
+          AMIRFACTS_DB: /tmp/amirfacts-test.sqlite3
         run: |
-          if [ -z "$AMIRXPROXY_BOT_TOKEN" ]; then
-            echo "TELEGRAM_BOT_TOKEN GitHub Secret is missing."
-            exit 1
-          fi
-
-          python -m py_compile /tmp/AmirXProxy_single_fixed.py
-
           python - <<'PY'
           import asyncio
           import importlib.util
-          import inspect
+          import os
           import sys
           from pathlib import Path
 
-          path = Path('/tmp/AmirXProxy_single_fixed.py')
-          name = 'amirxproxy_deep_test'
-          spec = importlib.util.spec_from_file_location(name, path)
+          path = Path('AmirXProxy_single.py')
+          spec = importlib.util.spec_from_file_location('amirfacts_test', path)
           module = importlib.util.module_from_spec(spec)
-          sys.modules[name] = module
+          sys.modules['amirfacts_test'] = module
           spec.loader.exec_module(module)
 
-          bot = module.build_bot()
-          callback_handlers = list(getattr(bot, 'callback_query_handlers', []))
-          message_handlers = list(getattr(bot, 'message_handlers', []))
+          assert module.fact_key('Hello   world', 'src') == module.fact_key('hello world', 'src')
+          assert module.clean_extract('[۱۲۳] ' + 'x' * 1000).__len__() <= module.MAX_FACT_LENGTH
 
-          assert callback_handlers, 'No callback-query handlers registered.'
-          assert message_handlers, 'No message handlers registered.'
+          keyboard = module.make_keyboard()
+          callbacks = [btn.callback_data for row in keyboard.keyboard for btn in row]
+          required = {'fact:new', 'fact:space', 'fact:science', 'fact:technology', 'fact:nature', 'fact:history', 'stats'}
+          assert required.issubset(set(callbacks)), 'Missing expected buttons'
 
-          required_prefixes = ('qty:', 'refresh:')
-          callback_sources = []
-          for handler in callback_handlers:
-              callback_sources.append(inspect.getsource(handler.get('function', lambda: None)))
-          joined = '\n'.join(callback_sources)
-          assert all(prefix in joined for prefix in required_prefixes), (
-              f'Missing expected callback handlers: {required_prefixes}'
-          )
+          async def run_tests():
+              # Network-backed test: verify Persian Wikipedia search works.
+              result = await module.fetch_wikipedia_fact('science')
+              assert result is not None, 'Wikipedia source returned no usable fact'
+              text, title, url = result
+              assert text and title and url.startswith('https://fa.wikipedia.org/')
+              assert len(text) >= 90
 
-          class FastSource:
-              name = 'fast-test'
-              async def collect(self):
-                  return []
+              # No-repeat test with the offline fallback path.
+              user_id = 987654321
+              got = await module.get_new_fact(user_id, topic='space')
+              assert got is not None, 'Could not obtain first fallback/online fact'
+              module.mark_seen(user_id, got[3])
+              assert module.has_seen(user_id, got[3])
 
-          class SlowSource:
-              name = 'slow-test'
-              async def collect(self):
-                  await asyncio.sleep(10)
-                  return []
+          asyncio.run(run_tests())
 
-          async def run_timeout_test():
-              started = asyncio.get_running_loop().time()
-              result = await module._bounded_collect_raw_candidates(
-                  [FastSource(), SlowSource()], per_source_timeout=0.15
-              )
-              elapsed = asyncio.get_running_loop().time() - started
-              assert result == [], f'Unexpected fake-source result: {result!r}'
-              assert elapsed < 1.5, f'Bounded collector took too long: {elapsed:.2f}s'
+          # Handler registration must contain the intended commands/buttons.
+          assert len(module.bot.message_handlers) >= 3
+          assert len(module.bot.callback_query_handlers) >= 3
 
-          asyncio.run(run_timeout_test())
-
-          many = [
-              module.Proxy(
-                  server=f"candidate-{i}.invalid",
-                  port=443,
-                  scheme=module.ProxyScheme.SOCKS5,
-              )
-              for i in range(5000)
-          ]
-          selected = module._cap_validation_candidates(many)
-          assert len(selected) == 96, f'Validation cap failed: {len(selected)}'
-
-          print('Deep runtime self-tests OK.')
-          print(f'Callback handlers: {len(callback_handlers)}')
-          print(f'Message handlers: {len(message_handlers)}')
-          print('Bounded collector timeout test: PASS')
-          print('5000 -> 96 validation-cap test: PASS')
+          print('AmirFacts deep self-tests: PASS')
+          print(f'Message handlers: {len(module.bot.message_handlers)}')
+          print(f'Callback handlers: {len(module.bot.callback_query_handlers)}')
+          print('Wikipedia network test: PASS')
+          print('SQLite no-repeat test: PASS')
+          print('Keyboard coverage test: PASS')
+          print('Hash normalization test: PASS')
           PY
 
-      - name: Smoke-test bot construction
+      - name: Telegram API preflight
         env:
           AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
@@ -128,69 +101,33 @@ jobs:
             exit 1
           fi
           python - <<'PY'
-          import importlib.util
-          import sys
-          from pathlib import Path
-
-          path = Path('/tmp/AmirXProxy_single_fixed.py')
-          name = 'amirxproxy_smoke'
-          spec = importlib.util.spec_from_file_location(name, path)
-          module = importlib.util.module_from_spec(spec)
-          sys.modules[name] = module
-          spec.loader.exec_module(module)
-          bot = module.build_bot()
-          print('Smoke test OK: build_bot() completed without exception.')
-          print(f'Callback handlers: {len(getattr(bot, "callback_query_handlers", []))}')
-          print(f'Message handlers: {len(getattr(bot, "message_handlers", []))}')
-          PY
-
-      - name: Verify Telegram API and reset webhook
-        env:
-          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          python - <<'PY'
           import json
           import os
-          import urllib.parse
           import urllib.request
+          import urllib.parse
 
-          token = os.environ.get('AMIRXPROXY_BOT_TOKEN', '')
-          if not token:
-              raise SystemExit('Telegram token secret is empty.')
-
+          token = os.environ['AMIRXPROXY_BOT_TOKEN']
           base = f'https://api.telegram.org/bot{token}'
 
           def call(method, params=None):
-              url = f'{base}/{method}'
+              url = base + '/' + method
               if params:
                   url += '?' + urllib.parse.urlencode(params)
               with urllib.request.urlopen(url, timeout=30) as response:
                   data = json.load(response)
               if not data.get('ok'):
                   raise SystemExit(f'{method} failed: {data}')
-              return data
+              return data['result']
 
-          me = call('getMe')['result']
+          me = call('getMe')
           print(f'Telegram API OK: @{me.get("username", "unknown")}')
-
-          webhook = call('getWebhookInfo')['result']
-          current_url = webhook.get('url', '')
-          if current_url:
-              print('Webhook detected; removing it before polling.')
-          else:
-              print('No webhook configured; polling can start directly.')
-
-          deleted = call('deleteWebhook', {'drop_pending_updates': 'false'})
-          print(f'Webhook reset OK: {deleted.get("result")}')
-
-          final_webhook = call('getWebhookInfo')['result']
-          if final_webhook.get('url'):
-              raise SystemExit('Webhook is still configured after deleteWebhook.')
-          print('Telegram polling preflight OK.')
+          call('deleteWebhook', {'drop_pending_updates': 'false'})
+          info = call('getWebhookInfo')
+          assert not info.get('url'), f'Webhook still active: {info.get("url")}'
+          print('Telegram polling preflight: PASS')
           PY
 
-      - name: Run Telegram bot
+      - name: Run AmirFacts bot
         env:
           AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          python /tmp/AmirXProxy_single_fixed.py
+        run: python AmirXProxy_single.py
