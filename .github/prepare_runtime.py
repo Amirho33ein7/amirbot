@@ -28,7 +28,11 @@ def main() -> None:
     fixed = fixed.replace(old, new, 1)
 
     tree = ast.parse(fixed, filename=str(OUTPUT))
-    function_names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+    function_names = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
     required = set(names) | {"build_bot", "main"}
     missing = sorted(required - function_names)
     if missing:
