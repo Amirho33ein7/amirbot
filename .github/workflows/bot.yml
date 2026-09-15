@@ -38,6 +38,75 @@ jobs:
       - name: Prepare fixed runtime and validate handlers
         run: python .github/prepare_runtime.py
 
+      - name: Deep runtime self-tests
+        env:
+          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ -z "$AMIRXPROXY_BOT_TOKEN" ]; then
+            echo "TELEGRAM_BOT_TOKEN GitHub Secret is missing."
+            exit 1
+          fi
+
+          python -m py_compile /tmp/AmirXProxy_single_fixed.py
+
+          python - <<'PY'
+          import asyncio
+          import importlib.util
+          import inspect
+          import sys
+          from pathlib import Path
+
+          path = Path('/tmp/AmirXProxy_single_fixed.py')
+          name = 'amirxproxy_deep_test'
+          spec = importlib.util.spec_from_file_location(name, path)
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[name] = module
+          spec.loader.exec_module(module)
+
+          bot = module.build_bot()
+          callback_handlers = list(getattr(bot, 'callback_query_handlers', []))
+          message_handlers = list(getattr(bot, 'message_handlers', []))
+
+          assert callback_handlers, 'No callback-query handlers registered.'
+          assert message_handlers, 'No message handlers registered.'
+
+          required_prefixes = ('qty:', 'refresh:')
+          callback_sources = []
+          for handler in callback_handlers:
+              callback_sources.append(inspect.getsource(handler.get('function', lambda: None)))
+          joined = '\n'.join(callback_sources)
+          assert all(prefix in joined for prefix in required_prefixes), (
+              f'Missing expected callback handlers: {required_prefixes}'
+          )
+
+          class FastSource:
+              name = 'fast-test'
+              async def collect(self):
+                  return []
+
+          class SlowSource:
+              name = 'slow-test'
+              async def collect(self):
+                  await asyncio.sleep(10)
+                  return []
+
+          async def run_timeout_test():
+              started = asyncio.get_running_loop().time()
+              result = await module._bounded_collect_raw_candidates(
+                  [FastSource(), SlowSource()], per_source_timeout=0.15
+              )
+              elapsed = asyncio.get_running_loop().time() - started
+              assert result == [], f'Unexpected fake-source result: {result!r}'
+              assert elapsed < 1.5, f'Bounded collector took too long: {elapsed:.2f}s'
+
+          asyncio.run(run_timeout_test())
+
+          print('Deep runtime self-tests OK.')
+          print(f'Callback handlers: {len(callback_handlers)}')
+          print(f'Message handlers: {len(message_handlers)}')
+          print('Bounded collector timeout test: PASS')
+          PY
+
       - name: Smoke-test bot construction
         env:
           AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -59,7 +128,8 @@ jobs:
           spec.loader.exec_module(module)
           bot = module.build_bot()
           print('Smoke test OK: build_bot() completed without exception.')
-          print(f'Handler backends: {len(getattr(bot, "handlers", {}))}')
+          print(f'Callback handlers: {len(getattr(bot, "callback_query_handlers", []))}')
+          print(f'Message handlers: {len(getattr(bot, "message_handlers", []))}')
           PY
 
       - name: Verify Telegram API and reset webhook
