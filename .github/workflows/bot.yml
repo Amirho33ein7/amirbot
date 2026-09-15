@@ -33,18 +33,17 @@ jobs:
 
       - name: Validate Python syntax
         env:
-          AMIRXPROXY_BOT_TOKEN: TEST_TOKEN_FOR_CI
+          AMIRXPROXY_BOT_TOKEN: "123456:CI_TEST_TOKEN"
         run: python -m py_compile AmirXProxy_single.py
 
       - name: Deep AmirFacts self-tests
         env:
-          AMIRXPROXY_BOT_TOKEN: TEST_TOKEN_FOR_CI
+          AMIRXPROXY_BOT_TOKEN: "123456:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-test.sqlite3
         run: |
           python - <<'PY'
           import asyncio
           import importlib.util
-          import os
           import sys
           from pathlib import Path
 
@@ -55,7 +54,7 @@ jobs:
           spec.loader.exec_module(module)
 
           assert module.fact_key('Hello   world', 'src') == module.fact_key('hello world', 'src')
-          assert module.clean_extract('[۱۲۳] ' + 'x' * 1000).__len__() <= module.MAX_FACT_LENGTH
+          assert len(module.clean_extract('[۱۲۳] ' + 'x' * 1000)) <= module.MAX_FACT_LENGTH
 
           keyboard = module.make_keyboard()
           callbacks = [btn.callback_data for row in keyboard.keyboard for btn in row]
@@ -63,23 +62,20 @@ jobs:
           assert required.issubset(set(callbacks)), 'Missing expected buttons'
 
           async def run_tests():
-              # Network-backed test: verify Persian Wikipedia search works.
               result = await module.fetch_wikipedia_fact('science')
               assert result is not None, 'Wikipedia source returned no usable fact'
               text, title, url = result
               assert text and title and url.startswith('https://fa.wikipedia.org/')
               assert len(text) >= 90
 
-              # No-repeat test with the offline fallback path.
               user_id = 987654321
               got = await module.get_new_fact(user_id, topic='space')
-              assert got is not None, 'Could not obtain first fallback/online fact'
+              assert got is not None, 'Could not obtain first fact'
               module.mark_seen(user_id, got[3])
               assert module.has_seen(user_id, got[3])
 
           asyncio.run(run_tests())
 
-          # Handler registration must contain the intended commands/buttons.
           assert len(module.bot.message_handlers) >= 3
           assert len(module.bot.callback_query_handlers) >= 3
 
@@ -103,8 +99,8 @@ jobs:
           python - <<'PY'
           import json
           import os
-          import urllib.request
           import urllib.parse
+          import urllib.request
 
           token = os.environ['AMIRXPROXY_BOT_TOKEN']
           base = f'https://api.telegram.org/bot{token}'
