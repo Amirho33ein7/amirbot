@@ -48,11 +48,14 @@ jobs:
           fi
           python - <<'PY'
           import importlib.util
+          import sys
           from pathlib import Path
 
           path = Path('/tmp/AmirXProxy_single_fixed.py')
-          spec = importlib.util.spec_from_file_location('amirxproxy_smoke', path)
+          name = 'amirxproxy_smoke'
+          spec = importlib.util.spec_from_file_location(name, path)
           module = importlib.util.module_from_spec(spec)
+          sys.modules[name] = module
           spec.loader.exec_module(module)
           bot = module.build_bot()
           print('Smoke test OK: build_bot() completed without exception.')
