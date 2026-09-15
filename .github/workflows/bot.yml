@@ -47,8 +47,8 @@ jobs:
 
           path = Path('AmirFacts.py')
           source = path.read_text(encoding='utf-8')
-          assert 'infinity_polling' not in source
-          assert 'Polling is OFF by design' in source
+          assert 'infinity_polling' in source
+          assert 'Polling is OFF by design' not in source
 
           spec = importlib.util.spec_from_file_location('amirfacts_test', path)
           module = importlib.util.module_from_spec(spec)
@@ -60,6 +60,7 @@ jobs:
           assert module.persian_only('این یک جمله فارسی درباره فضا و ستاره‌ها است.')
           assert not module.usable('This is an English sentence about football and history.')
           assert module.usable('اولین دوره جام جهانی فوتبال در سال ۱۹۳۰ در اروگوئه برگزار شد و تاریخ مهمی در فوتبال است.')
+          assert callable(module.source_wikipedia_random)
 
           key1 = module.fact_key('Hello   World', 'SRC')
           key2 = module.fact_key('hello world', 'src')
@@ -77,12 +78,13 @@ jobs:
           assert callable(module.get_new_fact)
           assert callable(module.source_football_wikipedia)
           assert callable(module.source_wikidata_football)
+          assert callable(module.bot.infinity_polling)
 
           print('Static/unit tests: PASS')
           print('Persian-only gate: PASS')
           print('No-repeat/SQLite test: PASS')
-          print('Football handler/source coverage: PASS')
-          print('Production polling disabled in source: PASS')
+          print('Expanded source coverage: PASS')
+          print('Telegram polling enabled: PASS')
           PY
 
       - name: Live source tests
@@ -121,18 +123,19 @@ jobs:
           async def main():
               async with module.aiohttp.ClientSession(
                   timeout=module.TIMEOUT,
-                  headers={'User-Agent': 'AmirFacts-CI/3.0'},
+                  headers={'User-Agent': 'AmirFacts-CI/4.0'},
               ) as session:
                   results = await asyncio.gather(
                       one('Persian Wikipedia', module.source_wikipedia(session, 'science')),
+                      one('Random Persian Wikipedia', module.source_wikipedia_random(session, 'science')),
                       one('Football Wikipedia', module.source_football_wikipedia(session)),
                       one('Football Wikidata', module.source_wikidata_football(session)),
                       one('World Bank', module.source_world_bank(session, 'world')),
                       one('USGS', module.source_usgs(session, 'nature')),
                       one('NASA', module.source_nasa(session, 'space')),
                   )
-              assert sum(results) >= 3, f'Only {sum(results)}/6 live sources passed'
-              print(f'Live source coverage: {sum(results)}/6 PASS')
+              assert sum(results) >= 4, f'Only {sum(results)}/7 live sources passed'
+              print(f'Live source coverage: {sum(results)}/7 PASS')
 
           asyncio.run(main())
           PY
@@ -158,27 +161,24 @@ jobs:
 
           async def main():
               uid = 1122334455
-
-              football = await module.get_new_fact(uid, 'football')
-              assert football is not None, 'Football fact was not produced'
-              assert football[1] == 'فوتبال', f'Wrong category for football: {football[1]!r}'
-              assert module.usable(football[0])
-              module.mark_seen(uid, football[3], football[2], football[1])
-              assert module.has_seen(uid, football[3])
+              seen = set()
+              for topic in ('football', 'space', 'science', 'technology', 'nature', 'history', 'world'):
+                  value = await module.get_new_fact(uid, topic)
+                  assert value is not None, f'No fact for topic {topic}'
+                  assert module.usable(value[0])
+                  assert value[1] == module.TOPIC_NAMES[topic], f'Wrong category for {topic}: {value[1]!r}'
+                  assert value[3] not in seen, f'Duplicate key across E2E topic batch: {topic}'
+                  seen.add(value[3])
+                  module.mark_seen(uid, value[3], value[2], value[1])
 
               second = await module.get_new_fact(uid, 'football')
-              assert second is None or second[3] != football[3], 'Duplicate football fact returned'
               if second:
                   assert second[1] == 'فوتبال'
-                  assert module.usable(second[0])
+                  assert second[3] not in seen
 
-              general = await module.get_new_fact(uid)
-              assert general is not None, 'General fact was not produced'
-              assert module.usable(general[0])
-
-              print('Football E2E test: PASS')
-              print('No-duplicate E2E test: PASS')
-              print('General fact E2E test: PASS')
+              print('All-topic E2E test: PASS')
+              print('Cross-topic non-duplicate test: PASS')
+              print('Football category isolation: PASS')
 
           asyncio.run(main())
           PY
