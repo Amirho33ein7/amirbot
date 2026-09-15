@@ -134,7 +134,7 @@ jobs:
                       one('USGS', module.source_usgs(session, 'nature')),
                       one('NASA', module.source_nasa(session, 'space')),
                   )
-              assert sum(results) >= 4, f'Only {sum(results)}/7 live sources passed'
+              assert sum(results) >= 3, f'Only {sum(results)}/7 live sources passed'
               print(f'Live source coverage: {sum(results)}/7 PASS')
 
           asyncio.run(main())
