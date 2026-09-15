@@ -30,35 +30,37 @@ jobs:
 
       - name: Compile
         env:
+          TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
         run: python -m py_compile AmirFacts.py
 
       - name: Static and unit tests
         env:
+          TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-test.sqlite3
         run: |
           python - <<'PY'
-          import asyncio
           import importlib.util
           import sys
           from pathlib import Path
 
           path = Path('AmirFacts.py')
+          source = path.read_text(encoding='utf-8')
+          assert 'infinity_polling' not in source
+          assert 'Polling is OFF by design' in source
+
           spec = importlib.util.spec_from_file_location('amirfacts_test', path)
           module = importlib.util.module_from_spec(spec)
           sys.modules['amirfacts_test'] = module
           spec.loader.exec_module(module)
-
           module.init_db()
 
-          # Persian-only gate must reject English-only output.
           assert not module.persian_only('This is an English sentence about space.')
           assert module.persian_only('این یک جمله فارسی درباره فضا و ستاره‌ها است.')
           assert not module.usable('This is an English sentence about football and history.')
           assert module.usable('اولین دوره جام جهانی فوتبال در سال ۱۹۳۰ در اروگوئه برگزار شد و تاریخ مهمی در فوتبال است.')
 
-          # Strong normalization/no-repeat test.
           key1 = module.fact_key('Hello   World', 'SRC')
           key2 = module.fact_key('hello world', 'src')
           assert key1 == key2
@@ -66,22 +68,29 @@ jobs:
           assert module.has_seen(1, key2)
           assert module.seen_count(1) == 1
 
-          # Callback coverage, including football.
           kb = module.keyboard()
           callbacks = {btn.callback_data for row in kb.keyboard for btn in row}
-          required = {'fact:new','fact:football','fact:space','fact:science','fact:technology','fact:nature','fact:history','fact:world','stats'}
+          required = {
+              'fact:new', 'fact:football', 'fact:space', 'fact:science',
+              'fact:technology', 'fact:nature', 'fact:history', 'fact:world', 'stats'
+          }
           assert required.issubset(callbacks), required - callbacks
           assert len(module.bot.message_handlers) >= 3
           assert len(module.bot.callback_query_handlers) >= 3
+          assert callable(module.get_new_fact)
+          assert callable(module.source_football_wikipedia)
+          assert callable(module.source_wikidata_football)
 
           print('Static/unit tests: PASS')
           print('Persian-only gate: PASS')
           print('No-repeat/SQLite test: PASS')
-          print('Football button coverage: PASS')
+          print('Football handler/source coverage: PASS')
+          print('Production polling disabled: PASS')
           PY
 
       - name: Live source tests
         env:
+          TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-live.sqlite3
         run: |
@@ -104,7 +113,7 @@ jobs:
                       print(f'{label}: NO_DATA')
                       return False
                   text, category, source, key = value
-                  assert module.usable(text), f'{label}: non-Persian/invalid text: {text!r}'
+                  assert module.usable(text), f'{label}: invalid/non-Persian text: {text!r}'
                   assert source and len(key) == 64
                   print(f'{label}: PASS | {source} | {category}')
                   return True
@@ -113,24 +122,27 @@ jobs:
                   return False
 
           async def main():
-              async with module.aiohttp.ClientSession(timeout=module.TIMEOUT, headers={'User-Agent':'AmirFacts-CI/1.0'}) as s:
+              async with module.aiohttp.ClientSession(
+                  timeout=module.TIMEOUT,
+                  headers={'User-Agent': 'AmirFacts-CI/3.0'},
+              ) as session:
                   results = await asyncio.gather(
-                      one('Persian Wikipedia', module.wikipedia(s, 'science')),
-                      one('Football Wikidata', module.wikidata_football(s)),
-                      one('World Bank', module.world_bank(s)),
-                      one('USGS', module.usgs(s)),
-                      one('NASA', module.nasa(s)),
+                      one('Persian Wikipedia', module.source_wikipedia(session, 'science')),
+                      one('Football Wikipedia', module.source_football_wikipedia(session)),
+                      one('Football Wikidata', module.source_wikidata_football(session)),
+                      one('World Bank', module.source_world_bank(session, 'world')),
+                      one('USGS', module.source_usgs(session, 'nature')),
+                      one('NASA', module.source_nasa(session, 'space')),
                   )
-              # A transient public endpoint outage must not fail the build,
-              # but at least three independent sources must be reachable.
-              assert sum(results) >= 3, f'Only {sum(results)}/5 live sources passed'
-              print(f'Live source coverage: {sum(results)}/5 PASS')
+              assert sum(results) >= 3, f'Only {sum(results)}/6 live sources passed'
+              print(f'Live source coverage: {sum(results)}/6 PASS')
 
           asyncio.run(main())
           PY
 
       - name: End-to-end fact selection test
         env:
+          TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-e2e.sqlite3
         run: |
@@ -140,7 +152,8 @@ jobs:
           import sys
           from pathlib import Path
 
-          spec = importlib.util.spec_from_file_location('amirfacts_e2e', Path('AmirFacts.py'))
+          path = Path('AmirFacts.py')
+          spec = importlib.util.spec_from_file_location('amirfacts_e2e', path)
           module = importlib.util.module_from_spec(spec)
           sys.modules['amirfacts_e2e'] = module
           spec.loader.exec_module(module)
@@ -148,9 +161,10 @@ jobs:
 
           async def main():
               uid = 1122334455
+
               football = await module.get_new_fact(uid, 'football')
               assert football is not None, 'Football fact was not produced'
-              assert football[1] == 'فوتبال'
+              assert football[1] == 'فوتبال', f'Wrong category for football: {football[1]!r}'
               assert module.usable(football[0])
               module.mark_seen(uid, football[3], football[2], football[1])
               assert module.has_seen(uid, football[3])
@@ -158,13 +172,22 @@ jobs:
               second = await module.get_new_fact(uid, 'football')
               assert second is None or second[3] != football[3], 'Duplicate football fact returned'
               if second:
+                  assert second[1] == 'فوتبال'
                   assert module.usable(second[0])
 
               general = await module.get_new_fact(uid)
-              assert general is not None
+              assert general is not None, 'General fact was not produced'
               assert module.usable(general[0])
+
+              for topic, expected in [('space', 'فضا'), ('nature', 'طبیعت'), ('world', 'جهان')]:
+                  value = await module.get_new_fact(uid, topic)
+                  if value is not None:
+                      assert value[1] == expected, f'{topic} leaked another category: {value[1]!r}'
+                      assert module.usable(value[0])
+
               print('Football E2E test: PASS')
               print('No-duplicate E2E test: PASS')
+              print('Topic-isolation E2E test: PASS')
               print('General fact E2E test: PASS')
 
           asyncio.run(main())
@@ -172,20 +195,23 @@ jobs:
 
       - name: Telegram API preflight only
         env:
-          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          test -n "$AMIRXPROXY_BOT_TOKEN"
+          test -n "$TELEGRAM_BOT_TOKEN"
           python - <<'PY'
-          import json, os, urllib.request, urllib.parse
-          token = os.environ['AMIRXPROXY_BOT_TOKEN']
+          import json
+          import os
+          import urllib.request
+
+          token = os.environ['TELEGRAM_BOT_TOKEN']
           base = f'https://api.telegram.org/bot{token}'
-          with urllib.request.urlopen(base + '/getMe', timeout=30) as r:
-              data = json.load(r)
+          with urllib.request.urlopen(base + '/getMe', timeout=30) as response:
+              data = json.load(response)
           assert data.get('ok'), data
           print(f"Telegram API preflight: PASS (@{data['result'].get('username','unknown')})")
           PY
 
       - name: Bot runtime status
         run: |
-          echo "AmirFacts bot polling is OFF by design."
-          echo "CI validates the code but does not start the Telegram polling loop."
+          echo "AmirFacts polling is OFF by design."
+          echo "All code paths are tested without starting the Telegram polling loop."
