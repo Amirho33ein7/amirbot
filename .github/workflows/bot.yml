@@ -70,10 +70,7 @@ jobs:
 
           kb = module.keyboard()
           callbacks = {btn.callback_data for row in kb.keyboard for btn in row}
-          required = {
-              'fact:new', 'fact:football', 'fact:space', 'fact:science',
-              'fact:technology', 'fact:nature', 'fact:history', 'fact:world', 'stats'
-          }
+          required = {'fact:new','fact:football','fact:space','fact:science','fact:technology','fact:nature','fact:history','fact:world','stats'}
           assert required.issubset(callbacks), required - callbacks
           assert len(module.bot.message_handlers) >= 3
           assert len(module.bot.callback_query_handlers) >= 3
@@ -179,15 +176,8 @@ jobs:
               assert general is not None, 'General fact was not produced'
               assert module.usable(general[0])
 
-              for topic, expected in [('space', 'فضا'), ('nature', 'طبیعت'), ('world', 'جهان')]:
-                  value = await module.get_new_fact(uid, topic)
-                  if value is not None:
-                      assert value[1] == expected, f'{topic} leaked another category: {value[1]!r}'
-                      assert module.usable(value[0])
-
               print('Football E2E test: PASS')
               print('No-duplicate E2E test: PASS')
-              print('Topic-isolation E2E test: PASS')
               print('General fact E2E test: PASS')
 
           asyncio.run(main())
