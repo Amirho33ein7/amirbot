@@ -17,16 +17,11 @@ import aiohttp
 from telebot import types
 from telebot.async_telebot import AsyncTeleBot
 
-# =========================================================
-# TOKEN — KEEP THIS SECTION
-# =========================================================
 BOT_TOKEN = "TOKEN RO INJA BEZAR"
 BOT_TOKEN = os.getenv("AMIRXPROXY_BOT_TOKEN", BOT_TOKEN)
-# =========================================================
-
 DB_PATH = Path(os.getenv("AMIRFACTS_DB", "amirfacts.sqlite3"))
 TIMEOUT = aiohttp.ClientTimeout(total=12, connect=5, sock_read=8)
-MIN_FACT = 80
+MIN_FACT = 60
 MAX_FACT = 650
 COOLDOWN = 2.0
 _last_action: dict[int, float] = {}
@@ -41,19 +36,17 @@ TOPICS: dict[str, tuple[str, ...]] = {
     "football": ("فوتبال", "جام جهانی", "لیگ قهرمانان", "رونالدو", "مسی", "پله", "مارادونا"),
     "world": ("جمعیت", "اقتصاد", "کشورها", "آمار", "جهان"),
 }
-NAMES = {k: v for k, v in {
-    "new": "دانستنی", "space": "فضا", "science": "علم", "technology": "فناوری",
-    "nature": "طبیعت", "history": "تاریخ", "football": "فوتبال", "world": "جهان"
-}.items()}
+NAMES = {"new":"دانستنی","space":"فضا","science":"علم","technology":"فناوری","nature":"طبیعت","history":"تاریخ","football":"فوتبال","world":"جهان"}
+FOOTBALL_PAGES = ("فوتبال", "جام جهانی فوتبال", "کریستیانو رونالدو", "لیونل مسی", "پله", "مارادونا", "لیگ قهرمانان اروپا")
 
 FALLBACKS = (
-    ("علم", "نور خورشید حدود ۸ دقیقه و ۲۰ ثانیه طول می‌کشد تا از خورشید به زمین برسد.", "دانش نجوم"),
-    ("طبیعت", "اختاپوس سه قلب دارد و خونش به‌دلیل وجود هموسیانین، متمایل به آبی است.", "دانش زیست‌شناسی"),
-    ("فوتبال", "اولین دوره جام جهانی فوتبال در سال ۱۹۳۰ در اروگوئه برگزار شد.", "تاریخ فوتبال"),
-    ("فوتبال", "پله تنها بازیکنی است که سه بار قهرمان جام جهانی فوتبال شده است.", "تاریخ فوتبال"),
-    ("فناوری", "کد QR می‌تواند داده را در دو بُعد ذخیره کند و برای خواندن سریع اطلاعات طراحی شده است.", "دانش فناوری"),
-    ("فضا", "یک شبانه‌روز خورشیدی روی عطارد حدود ۱۷۶ روز زمینی طول می‌کشد.", "دانش نجوم"),
-    ("تاریخ", "واژه الگوریتم از نام دانشمند ایرانی محمد بن موسی خوارزمی آمده است.", "تاریخ علم"),
+    ("علم", "نور خورشید حدود ۸ دقیقه و ۲۰ ثانیه طول می‌کشد تا از خورشید به زمین برسد و به همین دلیل ما خورشید را کمی دیرتر از لحظه واقعی می‌بینیم.", "دانش نجوم"),
+    ("طبیعت", "اختاپوس سه قلب دارد و خونش به‌دلیل وجود هموسیانین، متمایل به آبی است؛ این ماده در انتقال اکسیژن نقش دارد.", "دانش زیست‌شناسی"),
+    ("فوتبال", "اولین دوره جام جهانی فوتبال در سال ۱۹۳۰ در اروگوئه برگزار شد و تیم میزبان قهرمان آن دوره شد.", "تاریخ فوتبال"),
+    ("فوتبال", "پله تنها بازیکنی است که سه بار قهرمان جام جهانی فوتبال شده است و این رکورد تا امروز حفظ شده است.", "تاریخ فوتبال"),
+    ("فناوری", "کد QR می‌تواند داده را در دو بُعد ذخیره کند و برای خواندن سریع اطلاعات توسط دوربین تلفن همراه طراحی شده است.", "دانش فناوری"),
+    ("فضا", "یک شبانه‌روز خورشیدی روی عطارد حدود ۱۷۶ روز زمینی طول می‌کشد و این نتیجه از نسبت چرخش و گردش این سیاره به‌دست می‌آید.", "دانش نجوم"),
+    ("تاریخ", "واژه الگوریتم از نام دانشمند ایرانی محمد بن موسی خوارزمی آمده است و امروزه در علوم رایانه کاربرد بسیار گسترده‌ای دارد.", "تاریخ علم"),
 )
 
 
@@ -67,9 +60,7 @@ def db() -> sqlite3.Connection:
 def init_db() -> None:
     with db() as c:
         c.execute("CREATE TABLE IF NOT EXISTS users(user_id INTEGER PRIMARY KEY, first_seen REAL NOT NULL, last_seen REAL NOT NULL)")
-        c.execute("""CREATE TABLE IF NOT EXISTS seen_facts(
-            user_id INTEGER NOT NULL, fact_key TEXT NOT NULL, created_at REAL NOT NULL,
-            source TEXT NOT NULL, category TEXT NOT NULL, PRIMARY KEY(user_id,fact_key))""")
+        c.execute("CREATE TABLE IF NOT EXISTS seen_facts(user_id INTEGER NOT NULL, fact_key TEXT NOT NULL, created_at REAL NOT NULL, source TEXT NOT NULL, category TEXT NOT NULL, PRIMARY KEY(user_id,fact_key))")
 
 
 def remember_user(uid: int) -> None:
@@ -119,11 +110,7 @@ def persian_only(text: str) -> bool:
 
 def usable(text: str) -> bool:
     text = clean(text)
-    if not MIN_FACT <= len(text) <= MAX_FACT:
-        return False
-    if "@" in text or "t.me/" in text.lower():
-        return False
-    return persian_only(text)
+    return MIN_FACT <= len(text) <= MAX_FACT and "@" not in text and "t.me/" not in text.lower() and persian_only(text)
 
 
 async def get_json(session: aiohttp.ClientSession, url: str, params: dict[str, Any] | None = None) -> Any:
@@ -138,29 +125,36 @@ async def get_json(session: aiohttp.ClientSession, url: str, params: dict[str, A
 
 async def wikipedia(session: aiohttp.ClientSession, topic: str | None) -> tuple[str, str, str, str] | None:
     q = random.choice(TOPICS.get(topic or "new", TOPICS["new"]))
-    data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {
-        "action": "query", "format": "json", "generator": "search", "gsrsearch": q,
-        "gsrnamespace": 0, "gsrlimit": 10, "prop": "extracts|info", "exintro": 1,
-        "explaintext": 1, "inprop": "url"
-    })
-    if not isinstance(data, dict):
-        return None
+    data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {"action":"query","format":"json","generator":"search","gsrsearch":q,"gsrnamespace":0,"gsrlimit":10,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"})
+    if not isinstance(data, dict): return None
     pages = list(data.get("query", {}).get("pages", {}).values())
     random.shuffle(pages)
     for p in pages:
         text, title, url = clean(str(p.get("extract", ""))), clean(str(p.get("title", ""))), str(p.get("fullurl", ""))
-        if title and url.startswith("https://fa.wikipedia.org/") and usable(text) and not any(x in title for x in ("کاربر:", "بحث:", "الگو:", "پرونده:", "رده:")):
+        if title and url.startswith("https://fa.wikipedia.org/") and usable(text) and not any(x in title for x in ("کاربر:","بحث:","الگو:","پرونده:","رده:")):
             return text, NAMES.get(topic or "new", "دانستنی"), "ویکی‌پدیای فارسی", fact_key(text, url)
+    return None
+
+
+async def football_wikipedia(session: aiohttp.ClientSession) -> tuple[str, str, str, str] | None:
+    titles = list(FOOTBALL_PAGES)
+    random.shuffle(titles)
+    for title in titles:
+        data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {"action":"query","format":"json","prop":"extracts|info","explaintext":1,"exintro":1,"inprop":"url","titles":title})
+        if not isinstance(data, dict):
+            continue
+        pages = list(data.get("query", {}).get("pages", {}).values())
+        for p in pages:
+            text, page_url = clean(str(p.get("extract", ""))), str(p.get("fullurl", ""))
+            if usable(text) and page_url.startswith("https://fa.wikipedia.org/"):
+                return text, "فوتبال", "ویکی‌پدیای فارسی — بخش فوتبال", fact_key(text, page_url)
     return None
 
 
 async def wikidata_football(session: aiohttp.ClientSession) -> tuple[str, str, str, str] | None:
     q = random.choice(TOPICS["football"])
-    data = await get_json(session, "https://www.wikidata.org/w/api.php", {
-        "action": "wbsearchentities", "search": q, "language": "fa", "uselang": "fa", "format": "json", "limit": 8, "type": "item"
-    })
-    if not isinstance(data, dict):
-        return None
+    data = await get_json(session, "https://www.wikidata.org/w/api.php", {"action":"wbsearchentities","search":q,"language":"fa","uselang":"fa","format":"json","limit":8,"type":"item"})
+    if not isinstance(data, dict): return None
     hits = data.get("search", [])
     random.shuffle(hits)
     for h in hits:
@@ -172,75 +166,51 @@ async def wikidata_football(session: aiohttp.ClientSession) -> tuple[str, str, s
 
 
 async def world_bank(session: aiohttp.ClientSession) -> tuple[str, str, str, str] | None:
-    if False:
-        return None
-    countries = {"IRN": "ایران", "FRA": "فرانسه", "DEU": "آلمان", "BRA": "برزیل", "JPN": "ژاپن"}
-    code, fa_name = random.choice(list(countries.items()))
-    data = await get_json(session, f"https://api.worldbank.org/v2/country/{code}/indicator/SP.POP.TOTL", {"format": "json", "per_page": 12})
-    if not isinstance(data, list) or len(data) < 2:
-        return None
+    code, fa_name = random.choice(list({"IRN":"ایران","FRA":"فرانسه","DEU":"آلمان","BRA":"برزیل","JPN":"ژاپن"}.items()))
+    data = await get_json(session, f"https://api.worldbank.org/v2/country/{code}/indicator/SP.POP.TOTL", {"format":"json","per_page":12})
+    if not isinstance(data, list) or len(data) < 2: return None
     row = next((x for x in data[1] if x.get("value") is not None), None)
-    if not row:
-        return None
-    year, value = str(row.get("date", "")), row.get("value")
-    try:
-        number = f"{int(value):,}".replace(",", "،")
-    except (TypeError, ValueError):
-        return None
-    text = f"طبق داده‌های بانک جهانی، جمعیت {fa_name} در سال {year} حدود {number} نفر ثبت شده است."
-    if usable(text):
-        return text, "جهان", "بانک جهانی", fact_key(text, f"{code}:{year}")
-    return None
+    if not row: return None
+    try: number = f"{int(row['value']):,}".replace(",", "،")
+    except (TypeError,ValueError): return None
+    text = f"طبق داده‌های بانک جهانی، جمعیت {fa_name} در سال {row.get('date')} حدود {number} نفر ثبت شده است."
+    return (text, "جهان", "بانک جهانی", fact_key(text, f"{code}:{row.get('date')}")) if usable(text) else None
 
 
 async def usgs(session: aiohttp.ClientSession) -> tuple[str, str, str, str] | None:
     data = await get_json(session, "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_month.geojson")
-    if not isinstance(data, dict) or not data.get("features"):
-        return None
-    item = random.choice(data["features"])
-    props = item.get("properties", {})
-    mag = props.get("mag")
-    if mag is None:
-        return None
+    if not isinstance(data, dict) or not data.get("features"): return None
+    item = random.choice(data["features"]); mag = item.get("properties", {}).get("mag")
+    if mag is None: return None
     text = f"در فهرست رخدادهای مهم اخیر سازمان زمین‌شناسی آمریکا، زمین‌لرزه‌ای با بزرگای حدود {float(mag):.1f} ثبت شده است."
-    if usable(text):
-        return text, "طبیعت", "سازمان زمین‌شناسی آمریکا", fact_key(text, str(item.get("id", mag)))
-    return None
+    return (text,"طبیعت","سازمان زمین‌شناسی آمریکا",fact_key(text,str(item.get('id',mag)))) if usable(text) else None
 
 
 async def nasa(session: aiohttp.ClientSession) -> tuple[str, str, str, str] | None:
-    data = await get_json(session, "https://api.nasa.gov/planetary/apod", {"api_key": os.getenv("NASA_API_KEY", "DEMO_KEY")})
-    if not isinstance(data, dict) or not data.get("date"):
-        return None
-    date = str(data["date"])
-    text = f"ناسا در برنامه «تصویر نجومی روز» برای تاریخ {date} یک محتوای نجومی منتشر کرده است."
-    return text, "فضا", "ناسا", fact_key(text, date)
+    data = await get_json(session, "https://api.nasa.gov/planetary/apod", {"api_key":os.getenv("NASA_API_KEY","DEMO_KEY")})
+    if not isinstance(data, dict) or not data.get("date"): return None
+    date = str(data["date"]); text = f"ناسا در برنامه «تصویر نجومی روز» برای تاریخ {date} یک محتوای نجومی منتشر کرده است."
+    return text,"فضا","ناسا",fact_key(text,date)
 
 
 async def live_fact(topic: str | None) -> tuple[str, str, str, str] | None:
-    headers = {"User-Agent": "AmirFacts/2.1"}
-    async with aiohttp.ClientSession(timeout=TIMEOUT, headers=headers) as session:
+    async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent":"AmirFacts/2.2"}) as s:
         if topic == "football":
-            for loader in (wikidata_football, lambda s: wikipedia(s, "football")):
-                value = await loader(session)
-                if value:
-                    return value
+            for loader in (football_wikipedia, wikidata_football):
+                value = await loader(s)
+                if value: return value
         if topic == "world":
-            value = await world_bank(session)
-            if value:
-                return value
+            value = await world_bank(s)
+            if value: return value
         if topic == "nature":
-            value = await usgs(session)
-            if value:
-                return value
+            value = await usgs(s)
+            if value: return value
         if topic == "space":
-            value = await nasa(session)
-            if value:
-                return value
-        for loader in (lambda s: wikipedia(s, topic), world_bank, usgs, nasa):
-            value = await loader(session)
-            if value:
-                return value
+            value = await nasa(s)
+            if value: return value
+        for loader in (lambda x: wikipedia(x, topic), world_bank, usgs, nasa):
+            value = await loader(s)
+            if value: return value
     return None
 
 
@@ -249,7 +219,7 @@ def fallback(uid: int, topic: str | None) -> tuple[str, str, str, str] | None:
     random.shuffle(pool)
     for category, text, source in pool:
         key = fact_key(text, source)
-        if not has_seen(uid, key):
+        if usable(text) and not has_seen(uid, key):
             return text, category, source, key
     return None
 
@@ -265,94 +235,67 @@ async def get_new_fact(uid: int, topic: str | None = None) -> tuple[str, str, st
 
 def allowed(uid: int) -> bool:
     now = time.time()
-    if now - _last_action.get(uid, 0.0) < COOLDOWN:
-        return False
+    if now - _last_action.get(uid, 0.0) < COOLDOWN: return False
     _last_action[uid] = now
     return True
 
 
 def keyboard() -> types.InlineKeyboardMarkup:
     kb = types.InlineKeyboardMarkup(row_width=2)
-    for row in (
-        (("🎲 فکت جدید", "fact:new"), ("⚽ فوتبال", "fact:football")),
-        (("🌌 فضا", "fact:space"), ("🧠 علم", "fact:science")),
-        (("💻 فناوری", "fact:technology"), ("🌿 طبیعت", "fact:nature")),
-        (("🏛️ تاریخ", "fact:history"), ("🌍 جهان", "fact:world")),
-    ):
-        kb.add(*[types.InlineKeyboardButton(a, callback_data=b) for a, b in row])
-    kb.add(types.InlineKeyboardButton("📊 آمار من", callback_data="stats"))
+    for row in ((("🎲 فکت جدید","fact:new"),("⚽ فوتبال","fact:football")),(("🌌 فضا","fact:space"),("🧠 علم","fact:science")),(("💻 فناوری","fact:technology"),("🌿 طبیعت","fact:nature")),(("🏛️ تاریخ","fact:history"),("🌍 جهان","fact:world"))):
+        kb.add(*[types.InlineKeyboardButton(a,callback_data=b) for a,b in row])
+    kb.add(types.InlineKeyboardButton("📊 آمار من",callback_data="stats"))
     return kb
 
 
 def render(text: str, category: str, source: str) -> str:
     return f"✨ <b>فکت جدید</b>\n\n{html.escape(text)}\n\n🏷️ <b>دسته:</b> {html.escape(category)}\n📚 <b>منبع:</b> {html.escape(source)}"
 
-
-if not BOT_TOKEN or BOT_TOKEN == "TOKEN RO INJA BEZAR":
-    raise RuntimeError("Telegram bot token is missing")
-
+if not BOT_TOKEN or BOT_TOKEN == "TOKEN RO INJA BEZAR": raise RuntimeError("Telegram bot token is missing")
 bot = AsyncTeleBot(BOT_TOKEN, parse_mode="HTML")
 
-
-@bot.message_handler(commands=["start", "help"])
+@bot.message_handler(commands=["start","help"])
 async def start_handler(message: types.Message) -> None:
     remember_user(message.from_user.id)
-    await bot.send_message(message.chat.id, "🚀 <b>AmirFacts</b>\n\nفکت‌های فارسی، منبع‌دار و غیرتکراری. ⚽ فوتبال هم اضافه شده.", reply_markup=keyboard())
+    await bot.send_message(message.chat.id,"🚀 <b>AmirFacts</b>\n\nفکت‌های فارسی، منبع‌دار و غیرتکراری. ⚽ فوتبال هم اضافه شده.",reply_markup=keyboard())
 
-
-async def send_fact(chat_id: int, uid: int, topic: str | None = None) -> None:
+async def send_fact(chat_id:int,uid:int,topic:str|None=None)->None:
     if not allowed(uid):
-        await bot.send_message(chat_id, "⏳ یه کم آروم‌تر 😄")
-        return
-    await bot.send_dice(chat_id, emoji="🎲")
-    status = await bot.send_message(chat_id, "🔎 <i>دارم از چند منبع دنبال فکت تازه می‌گردم...</i>")
-    result = await get_new_fact(uid, topic)
+        await bot.send_message(chat_id,"⏳ یه کم آروم‌تر 😄"); return
+    await bot.send_dice(chat_id,emoji="🎲")
+    status=await bot.send_message(chat_id,"🔎 <i>دارم از چند منبع دنبال فکت تازه می‌گردم...</i>")
+    result=await get_new_fact(uid,topic)
     if not result:
-        await bot.edit_message_text("😕 فعلاً فکت تازه‌ای پیدا نشد.", chat_id, status.message_id)
-        return
-    text, category, source, key = result
+        await bot.edit_message_text("😕 فعلاً فکت تازه‌ای پیدا نشد.",chat_id=chat_id,message_id=status.message_id); return
+    text,category,source,key=result
     if not usable(text):
-        await bot.edit_message_text("😕 یک فکت فارسیِ معتبر پیدا نشد؛ دوباره امتحان کن.", chat_id, status.message_id)
-        return
-    mark_seen(uid, key, source, category)
-    await bot.edit_message_text(render(text, category, source), chat_id=chat_id, message_id=status.message_id, reply_markup=keyboard())
-
+        await bot.edit_message_text("😕 فکت فارسی معتبر پیدا نشد.",chat_id=chat_id,message_id=status.message_id); return
+    mark_seen(uid,key,source,category)
+    await bot.edit_message_text(render(text,category,source),chat_id=chat_id,message_id=status.message_id,reply_markup=keyboard())
 
 @bot.message_handler(commands=["fact"])
-async def fact_command(message: types.Message) -> None:
-    await send_fact(message.chat.id, message.from_user.id)
-
+async def fact_command(message: types.Message)->None: await send_fact(message.chat.id,message.from_user.id)
 
 @bot.message_handler(commands=["stats"])
-async def stats_command(message: types.Message) -> None:
-    await bot.send_message(message.chat.id, f"📊 <b>آمار تو</b>\n\n🧠 فکت‌های دیده‌شده: <b>{seen_count(message.from_user.id)}</b>", reply_markup=keyboard())
+async def stats_command(message: types.Message)->None: await send_stats(message.chat.id,message.from_user.id)
 
+async def send_stats(chat_id:int,uid:int)->None:
+    await bot.send_message(chat_id,f"📊 <b>آمار تو</b>\n\n🧠 فکت‌های دیده‌شده: <b>{seen_count(uid)}</b>",reply_markup=keyboard())
 
-@bot.callback_query_handler(func=lambda call: call.data == "fact:new")
-async def new_fact_callback(call: types.CallbackQuery) -> None:
-    await bot.answer_callback_query(call.id)
-    await send_fact(call.message.chat.id, call.from_user.id)
+@bot.callback_query_handler(func=lambda call: call.data=="fact:new")
+async def new_fact_callback(call: types.CallbackQuery)->None:
+    await bot.answer_callback_query(call.id); await send_fact(call.message.chat.id,call.from_user.id)
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("fact:") and call.data!="fact:new")
+async def topic_callback(call: types.CallbackQuery)->None:
+    await bot.answer_callback_query(call.id); topic=call.data.split(":",1)[1]
+    if topic in TOPICS: await send_fact(call.message.chat.id,call.from_user.id,topic)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("fact:") and call.data != "fact:new")
-async def topic_callback(call: types.CallbackQuery) -> None:
-    await bot.answer_callback_query(call.id)
-    topic = call.data.split(":", 1)[1]
-    if topic in TOPICS:
-        await send_fact(call.message.chat.id, call.from_user.id, topic)
+@bot.callback_query_handler(func=lambda call: call.data=="stats")
+async def stats_callback(call: types.CallbackQuery)->None:
+    await bot.answer_callback_query(call.id); await send_stats(call.message.chat.id,call.from_user.id)
 
+async def main()->None:
+    init_db(); print("AmirFacts configured. Polling is OFF by design.")
 
-@bot.callback_query_handler(func=lambda call: call.data == "stats")
-async def stats_callback(call: types.CallbackQuery) -> None:
-    await bot.answer_callback_query(call.id)
-    await bot.send_message(call.message.chat.id, f"📊 <b>آمار تو</b>\n\n🧠 فکت‌های دیده‌شده: <b>{seen_count(call.from_user.id)}</b>", reply_markup=keyboard())
-
-
-async def main() -> None:
-    init_db()
-    # Deliberately do not call infinity_polling: the user asked to keep the bot OFF.
-    print("AmirFacts is configured. Polling is OFF.")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__=="__main__": asyncio.run(main())
