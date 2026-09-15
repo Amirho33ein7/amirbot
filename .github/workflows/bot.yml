@@ -101,10 +101,22 @@ jobs:
 
           asyncio.run(run_timeout_test())
 
+          many = [
+              module.Proxy(
+                  server=f"candidate-{i}.invalid",
+                  port=443,
+                  scheme=module.ProxyScheme.SOCKS5,
+              )
+              for i in range(5000)
+          ]
+          selected = module._cap_validation_candidates(many)
+          assert len(selected) == 96, f'Validation cap failed: {len(selected)}'
+
           print('Deep runtime self-tests OK.')
           print(f'Callback handlers: {len(callback_handlers)}')
           print(f'Message handlers: {len(message_handlers)}')
           print('Bounded collector timeout test: PASS')
+          print('5000 -> 96 validation-cap test: PASS')
           PY
 
       - name: Smoke-test bot construction
