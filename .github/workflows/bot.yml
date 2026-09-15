@@ -1,25 +1,22 @@
-name: AmirFacts Runner
+name: AmirFacts CI
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
-  schedule:
-    - cron: "0 8 * * *"
 
 concurrency:
-  group: amirfacts-runner
+  group: amirfacts-ci
   cancel-in-progress: true
 
 jobs:
-  run-bot:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 345
+    timeout-minutes: 20
     permissions:
       contents: read
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -31,12 +28,12 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
-      - name: Validate Python syntax
+      - name: Compile
         env:
           AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
         run: python -m py_compile AmirFacts.py
 
-      - name: Deep AmirFacts self-tests
+      - name: Static and unit tests
         env:
           AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-test.sqlite3
@@ -44,7 +41,6 @@ jobs:
           python - <<'PY'
           import asyncio
           import importlib.util
-          import sqlite3
           import sys
           from pathlib import Path
 
@@ -55,80 +51,141 @@ jobs:
           spec.loader.exec_module(module)
 
           module.init_db()
-          module.mark_seen(1, module.fact_key('Hello   World', 'SRC'), 'SRC', 'test')
-          assert module.has_seen(1, module.fact_key('hello world', 'src'))
-          assert module.clean_text('[۱۲۳] hello   world') == 'hello world'
 
-          keyboard = module.make_keyboard()
-          callbacks = {btn.callback_data for row in keyboard.keyboard for btn in row}
-          required = {
-              'fact:new', 'fact:space', 'fact:science', 'fact:technology',
-              'fact:nature', 'fact:history', 'fact:world', 'stats'
-          }
-          assert required.issubset(callbacks), f'Missing callbacks: {required - callbacks}'
+          # Persian-only gate must reject English-only output.
+          assert not module.persian_only('This is an English sentence about space.')
+          assert module.persian_only('این یک جمله فارسی درباره فضا و ستاره‌ها است.')
+          assert not module.usable('This is an English sentence about football and history.')
+          assert module.usable('اولین دوره جام جهانی فوتبال در سال ۱۹۳۰ در اروگوئه برگزار شد و تاریخ مهمی در فوتبال است.')
 
-          async def run_tests():
-              result = await module.fetch_fact_from_sources('science')
-              assert result is not None, 'No live-source fact returned'
-              text, title, url, key = result
-              assert module.usable_fact(text)
-              assert title and url.startswith('http') and len(key) == 64
+          # Strong normalization/no-repeat test.
+          key1 = module.fact_key('Hello   World', 'SRC')
+          key2 = module.fact_key('hello world', 'src')
+          assert key1 == key2
+          module.mark_seen(1, key1, 'SRC', 'test')
+          assert module.has_seen(1, key2)
+          assert module.seen_count(1) == 1
 
-              uid = 246813579
-              first = await module.get_new_fact(uid, 'space')
-              assert first is not None
-              module.mark_seen(uid, first[3], first[2], first[1])
-              assert module.has_seen(uid, first[3])
-
-          asyncio.run(run_tests())
+          # Callback coverage, including football.
+          kb = module.keyboard()
+          callbacks = {btn.callback_data for row in kb.keyboard for btn in row}
+          required = {'fact:new','fact:football','fact:space','fact:science','fact:technology','fact:nature','fact:history','fact:world','stats'}
+          assert required.issubset(callbacks), required - callbacks
           assert len(module.bot.message_handlers) >= 3
           assert len(module.bot.callback_query_handlers) >= 3
 
-          print('AmirFacts deep self-tests: PASS')
-          print(f'Message handlers: {len(module.bot.message_handlers)}')
-          print(f'Callback handlers: {len(module.bot.callback_query_handlers)}')
-          print('Live multi-source network test: PASS')
-          print('SQLite no-repeat test: PASS')
-          print('Keyboard coverage test: PASS')
-          print('Hash normalization test: PASS')
+          print('Static/unit tests: PASS')
+          print('Persian-only gate: PASS')
+          print('No-repeat/SQLite test: PASS')
+          print('Football button coverage: PASS')
           PY
 
-      - name: Telegram API preflight
+      - name: Live source tests
+        env:
+          AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
+          AMIRFACTS_DB: /tmp/amirfacts-live.sqlite3
+        run: |
+          python - <<'PY'
+          import asyncio
+          import importlib.util
+          import sys
+          from pathlib import Path
+
+          path = Path('AmirFacts.py')
+          spec = importlib.util.spec_from_file_location('amirfacts_live', path)
+          module = importlib.util.module_from_spec(spec)
+          sys.modules['amirfacts_live'] = module
+          spec.loader.exec_module(module)
+
+          async def one(label, coro):
+              try:
+                  value = await coro
+                  if value is None:
+                      print(f'{label}: NO_DATA')
+                      return False
+                  text, category, source, key = value
+                  assert module.usable(text), f'{label}: non-Persian/invalid text: {text!r}'
+                  assert source and len(key) == 64
+                  print(f'{label}: PASS | {source} | {category}')
+                  return True
+              except Exception as exc:
+                  print(f'{label}: FAIL | {type(exc).__name__}: {exc}')
+                  return False
+
+          async def main():
+              async with module.aiohttp.ClientSession(timeout=module.TIMEOUT, headers={'User-Agent':'AmirFacts-CI/1.0'}) as s:
+                  results = await asyncio.gather(
+                      one('Persian Wikipedia', module.wikipedia(s, 'science')),
+                      one('Football Wikidata', module.wikidata_football(s)),
+                      one('World Bank', module.world_bank(s)),
+                      one('USGS', module.usgs(s)),
+                      one('NASA', module.nasa(s)),
+                  )
+              # A transient public endpoint outage must not fail the build,
+              # but at least three independent sources must be reachable.
+              assert sum(results) >= 3, f'Only {sum(results)}/5 live sources passed'
+              print(f'Live source coverage: {sum(results)}/5 PASS')
+
+          asyncio.run(main())
+          PY
+
+      - name: End-to-end fact selection test
+        env:
+          AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
+          AMIRFACTS_DB: /tmp/amirfacts-e2e.sqlite3
+        run: |
+          python - <<'PY'
+          import asyncio
+          import importlib.util
+          import sys
+          from pathlib import Path
+
+          spec = importlib.util.spec_from_file_location('amirfacts_e2e', Path('AmirFacts.py'))
+          module = importlib.util.module_from_spec(spec)
+          sys.modules['amirfacts_e2e'] = module
+          spec.loader.exec_module(module)
+          module.init_db()
+
+          async def main():
+              uid = 1122334455
+              football = await module.get_new_fact(uid, 'football')
+              assert football is not None, 'Football fact was not produced'
+              assert football[1] == 'فوتبال'
+              assert module.usable(football[0])
+              module.mark_seen(uid, football[3], football[2], football[1])
+              assert module.has_seen(uid, football[3])
+
+              second = await module.get_new_fact(uid, 'football')
+              assert second is None or second[3] != football[3], 'Duplicate football fact returned'
+              if second:
+                  assert module.usable(second[0])
+
+              general = await module.get_new_fact(uid)
+              assert general is not None
+              assert module.usable(general[0])
+              print('Football E2E test: PASS')
+              print('No-duplicate E2E test: PASS')
+              print('General fact E2E test: PASS')
+
+          asyncio.run(main())
+          PY
+
+      - name: Telegram API preflight only
         env:
           AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          if [ -z "$AMIRXPROXY_BOT_TOKEN" ]; then
-            echo "TELEGRAM_BOT_TOKEN GitHub Secret is missing."
-            exit 1
-          fi
+          test -n "$AMIRXPROXY_BOT_TOKEN"
           python - <<'PY'
-          import json
-          import os
-          import urllib.parse
-          import urllib.request
-
+          import json, os, urllib.request, urllib.parse
           token = os.environ['AMIRXPROXY_BOT_TOKEN']
           base = f'https://api.telegram.org/bot{token}'
-
-          def call(method, params=None):
-              url = base + '/' + method
-              if params:
-                  url += '?' + urllib.parse.urlencode(params)
-              with urllib.request.urlopen(url, timeout=30) as response:
-                  data = json.load(response)
-              if not data.get('ok'):
-                  raise SystemExit(f'{method} failed: {data}')
-              return data['result']
-
-          me = call('getMe')
-          print(f'Telegram API OK: @{me.get("username", "unknown")}')
-          call('deleteWebhook', {'drop_pending_updates': 'false'})
-          info = call('getWebhookInfo')
-          assert not info.get('url'), f'Webhook still active: {info.get("url")}'
-          print('Telegram polling preflight: PASS')
+          with urllib.request.urlopen(base + '/getMe', timeout=30) as r:
+              data = json.load(r)
+          assert data.get('ok'), data
+          print(f"Telegram API preflight: PASS (@{data['result'].get('username','unknown')})")
           PY
 
-      - name: Run AmirFacts bot
-        env:
-          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: python AmirFacts.py
+      - name: Bot runtime status
+        run: |
+          echo "AmirFacts bot polling is OFF by design."
+          echo "CI validates the code but does not start the Telegram polling loop."
