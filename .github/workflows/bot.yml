@@ -32,10 +32,13 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
-      - name: Validate Python syntax
+      - name: Validate original Python syntax
         run: python -m py_compile AmirXProxy_single.py
 
-      - name: Run Telegram bot
+      - name: Prepare fixed runtime and validate handlers
+        run: python .github/prepare_runtime.py
+
+      - name: Smoke-test bot construction
         env:
           AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
@@ -43,4 +46,21 @@ jobs:
             echo "TELEGRAM_BOT_TOKEN GitHub Secret is missing."
             exit 1
           fi
-          python AmirXProxy_single.py
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          path = Path('/tmp/AmirXProxy_single_fixed.py')
+          spec = importlib.util.spec_from_file_location('amirxproxy_smoke', path)
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          bot = module.build_bot()
+          print('Smoke test OK: build_bot() completed without exception.')
+          print(f'Handler backends: {len(getattr(bot, "handlers", {}))}')
+          PY
+
+      - name: Run Telegram bot
+        env:
+          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          python /tmp/AmirXProxy_single_fixed.py
