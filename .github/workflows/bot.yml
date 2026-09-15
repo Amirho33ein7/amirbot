@@ -12,7 +12,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 330
     permissions:
       contents: read
     steps:
@@ -82,7 +82,7 @@ jobs:
           print('Persian-only gate: PASS')
           print('No-repeat/SQLite test: PASS')
           print('Football handler/source coverage: PASS')
-          print('Production polling disabled: PASS')
+          print('Production polling disabled in source: PASS')
           PY
 
       - name: Live source tests
@@ -201,7 +201,8 @@ jobs:
           print(f"Telegram API preflight: PASS (@{data['result'].get('username','unknown')})")
           PY
 
-      - name: Bot runtime status
-        run: |
-          echo "AmirFacts polling is OFF by design."
-          echo "All code paths are tested without starting the Telegram polling loop."
+      - name: Start Telegram bot polling
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python AmirFacts.py
