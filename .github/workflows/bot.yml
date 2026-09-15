@@ -33,56 +33,61 @@ jobs:
 
       - name: Validate Python syntax
         env:
-          AMIRXPROXY_BOT_TOKEN: "123456:CI_TEST_TOKEN"
-        run: python -m py_compile AmirXProxy_single.py
+          AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
+        run: python -m py_compile AmirFacts.py
 
       - name: Deep AmirFacts self-tests
         env:
-          AMIRXPROXY_BOT_TOKEN: "123456:CI_TEST_TOKEN"
+          AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-test.sqlite3
         run: |
           python - <<'PY'
           import asyncio
           import importlib.util
+          import sqlite3
           import sys
           from pathlib import Path
 
-          path = Path('AmirXProxy_single.py')
+          path = Path('AmirFacts.py')
           spec = importlib.util.spec_from_file_location('amirfacts_test', path)
           module = importlib.util.module_from_spec(spec)
           sys.modules['amirfacts_test'] = module
           spec.loader.exec_module(module)
 
-          assert module.fact_key('Hello   world', 'src') == module.fact_key('hello world', 'src')
-          assert len(module.clean_extract('[۱۲۳] ' + 'x' * 1000)) <= module.MAX_FACT_LENGTH
+          module.init_db()
+          module.mark_seen(1, module.fact_key('Hello   World', 'SRC'), 'SRC', 'test')
+          assert module.has_seen(1, module.fact_key('hello world', 'src'))
+          assert module.clean_text('[۱۲۳] hello   world') == 'hello world'
 
           keyboard = module.make_keyboard()
-          callbacks = [btn.callback_data for row in keyboard.keyboard for btn in row]
-          required = {'fact:new', 'fact:space', 'fact:science', 'fact:technology', 'fact:nature', 'fact:history', 'stats'}
-          assert required.issubset(set(callbacks)), 'Missing expected buttons'
+          callbacks = {btn.callback_data for row in keyboard.keyboard for btn in row}
+          required = {
+              'fact:new', 'fact:space', 'fact:science', 'fact:technology',
+              'fact:nature', 'fact:history', 'fact:world', 'stats'
+          }
+          assert required.issubset(callbacks), f'Missing callbacks: {required - callbacks}'
 
           async def run_tests():
-              result = await module.fetch_wikipedia_fact('science')
-              assert result is not None, 'Wikipedia source returned no usable fact'
-              text, title, url = result
-              assert text and title and url.startswith('https://fa.wikipedia.org/')
-              assert len(text) >= 90
+              result = await module.fetch_fact_from_sources('science')
+              assert result is not None, 'No live-source fact returned'
+              text, title, url, key = result
+              assert module.usable_fact(text)
+              assert title and url.startswith('http') and len(key) == 64
 
-              user_id = 987654321
-              got = await module.get_new_fact(user_id, topic='space')
-              assert got is not None, 'Could not obtain first fact'
-              module.mark_seen(user_id, got[3])
-              assert module.has_seen(user_id, got[3])
+              uid = 246813579
+              first = await module.get_new_fact(uid, 'space')
+              assert first is not None
+              module.mark_seen(uid, first[3], first[2], first[1])
+              assert module.has_seen(uid, first[3])
 
           asyncio.run(run_tests())
-
           assert len(module.bot.message_handlers) >= 3
           assert len(module.bot.callback_query_handlers) >= 3
 
           print('AmirFacts deep self-tests: PASS')
           print(f'Message handlers: {len(module.bot.message_handlers)}')
           print(f'Callback handlers: {len(module.bot.callback_query_handlers)}')
-          print('Wikipedia network test: PASS')
+          print('Live multi-source network test: PASS')
           print('SQLite no-repeat test: PASS')
           print('Keyboard coverage test: PASS')
           print('Hash normalization test: PASS')
@@ -126,4 +131,4 @@ jobs:
       - name: Run AmirFacts bot
         env:
           AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: python AmirXProxy_single.py
+        run: python AmirFacts.py
