@@ -204,5 +204,16 @@ jobs:
       - name: Start Telegram bot polling
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          AMIRXPROXY_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: python AmirFacts.py
+        run: |
+          python - <<'PY'
+          import asyncio
+          import os
+          import AmirFacts
+
+          token = os.environ.get('TELEGRAM_BOT_TOKEN')
+          assert token, 'TELEGRAM_BOT_TOKEN secret is missing'
+          AmirFacts.BOT_TOKEN = token
+          AmirFacts.init_db()
+          print('AmirFacts polling: STARTED')
+          asyncio.run(AmirFacts.bot.infinity_polling(skip_pending=True))
+          PY
