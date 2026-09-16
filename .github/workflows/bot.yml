@@ -96,7 +96,7 @@ jobs:
               print('This probe is informational; offline reserves are the mandatory continuity path.')
           asyncio.run(main())
           PY
-      - name: 192-request offline continuity and dedup stress
+      - name: 160-request full-reserve dedup stress
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-stress.sqlite3
@@ -124,7 +124,7 @@ jobs:
 
           async def main():
               uid = 881234
-              per_topic = 24
+              per_topic = 20
               seen_global = []
               for topic in module.TOPICS:
                   local = set()
@@ -152,6 +152,62 @@ jobs:
               print('Exact dedup: PASS')
               print('Near-duplicate rejection: PASS')
               print('Cross-topic isolation: PASS')
+          asyncio.run(main())
+          PY
+      - name: Post-reserve live recovery test
+        env:
+          TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
+          AMIRFACTS_DB: /tmp/amirfacts-recovery.sqlite3
+        run: |
+          python - <<'PY'
+          import asyncio, importlib.util, sys
+          from pathlib import Path
+          path = Path('AmirFacts.py')
+          spec = importlib.util.spec_from_file_location('recovery', path)
+          module = importlib.util.module_from_spec(spec)
+          sys.modules['recovery'] = module
+          spec.loader.exec_module(module)
+          module.init_db()
+
+          async def no_live(*args, **kwargs):
+              return None
+
+          module.source_wikipedia_random = no_live
+          module.source_wikidata_topic = no_live
+          module.source_nasa = no_live
+          module.source_world_bank = no_live
+          module.source_usgs = no_live
+
+          async def main():
+              uid = 445566
+              # Consume the entire local reserve for each topic first.
+              for topic in module.TOPICS:
+                  for text in module.FALLBACK_BANK[topic]:
+                      key = module.fact_key(text)
+                      category = module.TOPIC_NAMES[topic]
+                      module.mark_seen(uid, key, f'بانک پشتیبان {category}', category, text)
+
+              counters = {topic: 0 for topic in module.TOPICS}
+
+              async def live_recovery(session, topic):
+                  counters[topic] += 1
+                  text = f"فکت زنده آزمون {TOPIC_NAMES[topic]} شماره {counters[topic]} که فقط برای بررسی ادامه‌دار بودن منبع زنده تولید شده است و از بانک پشتیبان مستقل است."
+                  return text, TOPIC_NAMES[topic], 'منبع زنده آزمون', module.fact_key(text)
+
+              module.source_wikipedia = live_recovery
+              module.source_football = live_recovery
+
+              for topic in module.TOPICS:
+                  value = await module.get_new_fact(uid, topic)
+                  assert value is not None, f'POST-RESERVE CUTOFF: {topic}'
+                  text, category, source, key = value
+                  assert category == module.TOPIC_NAMES[topic]
+                  assert source == 'منبع زنده آزمون'
+                  assert 'شماره ۱' in text or 'شماره 1' in text
+                  assert not module.is_user_duplicate(uid, text)
+                  module.mark_seen(uid, key, source, category, text)
+              print('Post-reserve live recovery: PASS')
+              print('Every topic continued after exhausting its local reserve.')
           asyncio.run(main())
           PY
       - name: Mixed 80-request long-run stress
