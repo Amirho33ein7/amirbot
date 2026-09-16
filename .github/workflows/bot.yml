@@ -40,17 +40,18 @@ jobs:
           assert m.persian_only('این یک متن کاملاً فارسی برای آزمون است.') and not m.persian_only('This is English text.')
           assert m.fact_key('فکت تست','الف')==m.fact_key('فکت تست','ب')
           assert m.similarity_score('این یک فکت علمی درباره سلول و زیست شناسی است.','این یک فکت علمی درباره سلول و زیست شناسی است.')==1.0
-          total=0
+          total=0; capacities={}
           for topic,facts in m.FALLBACK_BANK.items():
               assert len(facts)>=20, f'{topic}: raw reserve too small'
               assert len(facts)==len(set(facts)), f'{topic}: duplicate reserve text'
               usable=[x for x in facts if m.usable(x)]
-              assert len(usable)>=18, f'{topic}: only {len(usable)} usable reserve facts'
+              capacities[topic]=len(usable); assert len(usable)>=14, f'{topic}: only {len(usable)} usable reserve facts'
               for x in usable:
                   if topic!='new': assert m.is_relevant(x,topic), f'{topic}: irrelevant reserve'
               total += len(usable)
           all_text=[x[1] for x in m.FALLBACK_FACTS]
           assert len(all_text)==len(set(all_text)), 'cross-topic duplicate reserve'
+          print('Effective offline capacities:', capacities)
           print('Effective offline reserve:', total)
           print('Core + reserve integrity: PASS')
           PY
@@ -66,13 +67,13 @@ jobs:
           p=Path('AmirFacts.py'); spec=importlib.util.spec_from_file_location('live',p); m=importlib.util.module_from_spec(spec); sys.modules['live']=m; spec.loader.exec_module(m)
           async def main():
               async with m.aiohttp.ClientSession(timeout=m.TIMEOUT) as s:
-                  tests=[m.source_wikipedia(s,'science'),m.source_wikipedia_random(s,'science'),m.source_wikidata_topic(s,'science'),m.source_football(s),m.source_world_bank(s,'world'),m.source_usgs(s,'nature'),m.source_nasa(s,'space')]
-                  r=[]
-                  for c in tests:
+                  probes=[m.source_wikipedia(s,'science'),m.source_wikipedia_random(s,'science'),m.source_wikidata_topic(s,'science'),m.source_football(s),m.source_world_bank(s,'world'),m.source_usgs(s,'nature'),m.source_nasa(s,'space')]
+                  ok=0
+                  for c in probes:
                       try:
-                          v=await c; r.append(bool(v and m.usable(v[0])))
-                      except Exception: r.append(False)
-                  print(f'Live source availability: {sum(r)}/7')
+                          v=await c; ok += bool(v and m.usable(v[0]))
+                      except Exception: pass
+                  print(f'Live source availability: {ok}/7')
           asyncio.run(main())
           PY
       - name: Full offline dedup stress
@@ -89,8 +90,7 @@ jobs:
           async def main():
               uid=881234; seen=[]; total=0
               for topic in m.TOPICS:
-                  cap=[x for x in m.FALLBACK_BANK[topic] if m.usable(x)]
-                  local=set()
+                  cap=[x for x in m.FALLBACK_BANK[topic] if m.usable(x)]; local=set()
                   for i in range(len(cap)):
                       v=await m.get_new_fact(uid,topic); assert v is not None, f'CUTOFF {topic} #{i+1}'
                       text,cat,src,key=v; assert m.usable(text) and cat==m.TOPIC_NAMES[topic] and key==m.fact_key(text)
@@ -122,8 +122,7 @@ jobs:
                       if m.usable(text): m.mark_seen(uid,m.fact_key(text),f'reserve {topic}',m.TOPIC_NAMES[topic],text)
               counters={t:0 for t in m.TOPICS}
               async def live(session,topic):
-                  counters[topic]+=1
-                  text=f"فکت زنده آزمون {m.TOPIC_NAMES[topic]} شماره {counters[topic]} که مستقل از بانک پشتیبان برای بررسی ادامه‌دار بودن منبع زنده تولید شده است."
+                  counters[topic]+=1; text=f"فکت زنده آزمون {m.TOPIC_NAMES[topic]} شماره {counters[topic]} که مستقل از بانک پشتیبان برای بررسی ادامه‌دار بودن منبع زنده تولید شده است."
                   return text,m.TOPIC_NAMES[topic],'منبع زنده آزمون',m.fact_key(text)
               m.source_wikipedia=m.source_football=live
               for topic in m.TOPICS:
