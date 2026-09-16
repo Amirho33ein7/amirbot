@@ -12,7 +12,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -24,10 +24,10 @@ jobs:
       - run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
       - name: Compile
         run: python -m py_compile AmirFacts.py
-      - name: Unit and source tests
+      - name: Core and reserve integrity tests
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
-          AMIRFACTS_DB: /tmp/amirfacts-test.sqlite3
+          AMIRFACTS_DB: /tmp/amirfacts-core.sqlite3
         run: |
           python - <<'PY'
           import importlib.util, sys
@@ -46,10 +46,22 @@ jobs:
           assert callable(module.source_wikipedia_random)
           assert callable(module.source_wikidata_topic)
           assert callable(module.get_new_fact)
-          key_a = module.fact_key('فکت تست', 'الف')
-          key_b = module.fact_key('فکت تست', 'ب')
+          assert set(module.TOPICS) == {'new','space','science','technology','nature','history','football','world'}
+          for topic, facts in module.FALLBACK_BANK.items():
+              assert len(facts) >= 20, f'{topic}: only {len(facts)} offline facts'
+              assert len(set(facts)) == len(facts), f'{topic}: duplicate fallback text'
+              for text in facts:
+                  assert module.usable(text), f'{topic}: unusable fallback'
+                  if topic != 'new':
+                      assert module.is_relevant(text, topic), f'{topic}: irrelevant fallback'
+          all_texts = [x[1] for x in module.FALLBACK_FACTS]
+          assert len(all_texts) == len(set(all_texts)), 'duplicate fallback across topics'
+          key_a = module.fact_key('یک فکت تست', 'الف')
+          key_b = module.fact_key('یک فکت تست', 'ب')
           assert key_a == key_b
-          print('Core tests: PASS')
+          assert module.similarity_score('این یک فکت علمی درباره سلول و زیست شناسی است.', 'این یک فکت علمی درباره سلول و زیست شناسی است.') == 1.0
+          assert module.similarity_score('سرعت نور در خلأ یک ثابت بنیادی فیزیک است.', 'سرعت نور در خلأ یک ثابت بنیادی فیزیک است.') >= 0.99
+          print('Core + reserve integrity: PASS')
           PY
       - name: Live source tests
         env:
@@ -72,7 +84,7 @@ jobs:
                   print(type(exc).__name__, exc)
                   return False
           async def main():
-              async with module.aiohttp.ClientSession(timeout=module.TIMEOUT, headers={'User-Agent':'AmirFacts-CI/6.0'}) as session:
+              async with module.aiohttp.ClientSession(timeout=module.TIMEOUT, headers={'User-Agent':'AmirFacts-CI/8.0'}) as session:
                   results = await asyncio.gather(
                       probe(module.source_wikipedia(session,'science')),
                       probe(module.source_wikipedia_random(session,'science')),
@@ -86,35 +98,104 @@ jobs:
               print(f'Live sources: {sum(results)}/7 PASS')
           asyncio.run(main())
           PY
-      - name: Strong non-repeat and category tests
+      - name: 200-request offline continuity and dedup stress
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
-          AMIRFACTS_DB: /tmp/amirfacts-e2e.sqlite3
+          AMIRFACTS_DB: /tmp/amirfacts-stress.sqlite3
         run: |
           python - <<'PY'
           import asyncio, importlib.util, sys
           from pathlib import Path
           path = Path('AmirFacts.py')
-          spec = importlib.util.spec_from_file_location('e2e', path)
+          spec = importlib.util.spec_from_file_location('stress', path)
           module = importlib.util.module_from_spec(spec)
-          sys.modules['e2e'] = module
+          sys.modules['stress'] = module
           spec.loader.exec_module(module)
           module.init_db()
+
+          async def no_live(*args, **kwargs):
+              return None
+
+          # Force the engine into its offline safety net. This proves every
+          # topic remains productive when ALL external services fail.
+          module.source_wikipedia = no_live
+          module.source_wikipedia_random = no_live
+          module.source_wikidata_topic = no_live
+          module.source_football = no_live
+          module.source_nasa = no_live
+          module.source_world_bank = no_live
+          module.source_usgs = no_live
+
           async def main():
-              uid = 777001
-              keys = set()
-              for topic in ('science','science','science','science','technology','nature','history','space','world','football'):
-                  value = await module.get_new_fact(uid, topic)
-                  assert value is not None, f'empty result: {topic}'
-                  assert module.usable(value[0])
-                  assert value[1] == module.TOPIC_NAMES[topic]
-                  assert value[3] not in keys, f'duplicate key: {topic}'
-                  keys.add(value[3])
-                  module.mark_seen(uid, value[3], value[2], value[1], value[0])
-              assert module.seen_count(uid) == len(keys)
-              print('10-request E2E: PASS')
-              print('Repeated science: PASS')
+              uid = 881234
+              per_topic = 24
+              seen_global = []
+              for topic in module.TOPICS:
+                  local = set()
+                  for i in range(per_topic):
+                      value = await module.get_new_fact(uid, topic)
+                      assert value is not None, f'CUT-OFF: {topic} at request {i + 1}'
+                      text, category, source, key = value
+                      assert module.usable(text), f'unusable {topic}'
+                      assert category == module.TOPIC_NAMES[topic], (topic, category)
+                      assert key == module.fact_key(text)
+                      assert key not in local, f'local duplicate {topic} at {i + 1}'
+                      assert key not in {x[0] for x in seen_global}, f'cross-topic duplicate at {topic}'
+                      if topic != 'new':
+                          assert module.is_relevant(text, topic), f'wrong category content: {topic}'
+                      for old_key, old_text in seen_global[-120:]:
+                          assert module.similarity_score(text, old_text) < 0.84, f'near duplicate in {topic}'
+                      local.add(key)
+                      seen_global.append((key, text))
+                      module.mark_seen(uid, key, source, category, text)
+                  assert len(local) == per_topic, f'{topic}: only {len(local)} unique'
+              expected = per_topic * len(module.TOPICS)
+              assert module.seen_count(uid) == expected, (module.seen_count(uid), expected)
+              print(f'Offline stress: {expected} unique requests PASS')
+              print('All-topic continuity: PASS')
+              print('Exact dedup: PASS')
+              print('Near-duplicate rejection: PASS')
               print('Cross-topic isolation: PASS')
+          asyncio.run(main())
+          PY
+      - name: Mixed long-run stress
+        env:
+          TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
+          AMIRFACTS_DB: /tmp/amirfacts-mixed.sqlite3
+        run: |
+          python - <<'PY'
+          import asyncio, importlib.util, sys
+          from pathlib import Path
+          path = Path('AmirFacts.py')
+          spec = importlib.util.spec_from_file_location('mixed', path)
+          module = importlib.util.module_from_spec(spec)
+          sys.modules['mixed'] = module
+          spec.loader.exec_module(module)
+          module.init_db()
+          async def no_live(*args, **kwargs):
+              return None
+          module.source_wikipedia = no_live
+          module.source_wikipedia_random = no_live
+          module.source_wikidata_topic = no_live
+          module.source_football = no_live
+          module.source_nasa = no_live
+          module.source_world_bank = no_live
+          module.source_usgs = no_live
+          async def main():
+              uid = 991122
+              order = ['science','technology','nature','history','space','world','football','new'] * 10
+              keys = set()
+              for i, topic in enumerate(order, 1):
+                  value = await module.get_new_fact(uid, topic)
+                  assert value is not None, f'mixed cut-off at {i} ({topic})'
+                  text, category, source, key = value
+                  assert module.usable(text)
+                  assert category == module.TOPIC_NAMES[topic]
+                  assert key not in keys, f'mixed duplicate at {i}'
+                  keys.add(key)
+                  module.mark_seen(uid, key, source, category, text)
+              assert len(keys) == len(order)
+              print(f'Mixed long-run: {len(order)} sequential requests PASS')
           asyncio.run(main())
           PY
       - name: Runtime status
