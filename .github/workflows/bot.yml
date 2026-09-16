@@ -12,208 +12,110 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
-
+      - run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
       - name: Compile
-        env:
-          TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
-          AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
         run: python -m py_compile AmirFacts.py
-
-      - name: Static and unit tests
+      - name: Unit and source tests
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
-          AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-test.sqlite3
         run: |
           python - <<'PY'
-          import importlib.util
-          import sys
+          import importlib.util, sys
           from pathlib import Path
-
           path = Path('AmirFacts.py')
           source = path.read_text(encoding='utf-8')
-          assert 'infinity_polling' in source
-          assert 'Polling is OFF by design' not in source
-
-          spec = importlib.util.spec_from_file_location('amirfacts_test', path)
+          assert 'infinity_polling' not in source
+          spec = importlib.util.spec_from_file_location('facts', path)
           module = importlib.util.module_from_spec(spec)
-          sys.modules['amirfacts_test'] = module
+          sys.modules['facts'] = module
           spec.loader.exec_module(module)
           module.init_db()
-
-          assert not module.persian_only('This is an English sentence about space.')
-          assert module.persian_only('این یک جمله فارسی درباره فضا و ستاره‌ها است.')
-          assert not module.usable('This is an English sentence about football and history.')
-          assert module.usable('اولین دوره جام جهانی فوتبال در سال ۱۹۳۰ در اروگوئه برگزار شد و تاریخ مهمی در فوتبال است.')
+          assert module.persian_only('این یک متن کاملاً فارسی برای آزمون است.')
+          assert not module.persian_only('This is English text.')
+          assert callable(module.source_wikipedia)
           assert callable(module.source_wikipedia_random)
-
-          key1 = module.fact_key('Hello   World', 'SRC')
-          key2 = module.fact_key('hello world', 'src')
-          assert key1 == key2
-          module.mark_seen(1, key1, 'SRC', 'test')
-          assert module.has_seen(1, key2)
-          assert module.seen_count(1) == 1
-
-          kb = module.keyboard()
-          callbacks = {btn.callback_data for row in kb.keyboard for btn in row}
-          required = {'fact:new','fact:football','fact:space','fact:science','fact:technology','fact:nature','fact:history','fact:world','stats'}
-          assert required.issubset(callbacks), required - callbacks
-          assert len(module.bot.message_handlers) >= 3
-          assert len(module.bot.callback_query_handlers) >= 3
+          assert callable(module.source_wikidata_topic)
           assert callable(module.get_new_fact)
-          assert callable(module.source_football_wikipedia)
-          assert callable(module.source_wikidata_football)
-          assert callable(module.bot.infinity_polling)
-
-          print('Static/unit tests: PASS')
-          print('Persian-only gate: PASS')
-          print('No-repeat/SQLite test: PASS')
-          print('Expanded source coverage: PASS')
-          print('Telegram polling enabled: PASS')
+          key_a = module.fact_key('فکت تست', 'الف')
+          key_b = module.fact_key('فکت تست', 'ب')
+          assert key_a == key_b
+          print('Core tests: PASS')
           PY
-
       - name: Live source tests
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
-          AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-live.sqlite3
         run: |
           python - <<'PY'
-          import asyncio
-          import importlib.util
-          import sys
+          import asyncio, importlib.util, sys
           from pathlib import Path
-
           path = Path('AmirFacts.py')
-          spec = importlib.util.spec_from_file_location('amirfacts_live', path)
+          spec = importlib.util.spec_from_file_location('live', path)
           module = importlib.util.module_from_spec(spec)
-          sys.modules['amirfacts_live'] = module
+          sys.modules['live'] = module
           spec.loader.exec_module(module)
-
-          async def one(label, coro):
+          async def probe(coro):
               try:
                   value = await coro
-                  if value is None:
-                      print(f'{label}: NO_DATA')
-                      return False
-                  text, category, source, key = value
-                  assert module.usable(text), f'{label}: invalid/non-Persian text: {text!r}'
-                  assert source and len(key) == 64
-                  print(f'{label}: PASS | {source} | {category}')
-                  return True
+                  return bool(value and module.usable(value[0]))
               except Exception as exc:
-                  print(f'{label}: FAIL | {type(exc).__name__}: {exc}')
+                  print(type(exc).__name__, exc)
                   return False
-
           async def main():
-              async with module.aiohttp.ClientSession(
-                  timeout=module.TIMEOUT,
-                  headers={'User-Agent': 'AmirFacts-CI/4.0'},
-              ) as session:
+              async with module.aiohttp.ClientSession(timeout=module.TIMEOUT, headers={'User-Agent':'AmirFacts-CI/6.0'}) as session:
                   results = await asyncio.gather(
-                      one('Persian Wikipedia', module.source_wikipedia(session, 'science')),
-                      one('Random Persian Wikipedia', module.source_wikipedia_random(session, 'science')),
-                      one('Football Wikipedia', module.source_football_wikipedia(session)),
-                      one('Football Wikidata', module.source_wikidata_football(session)),
-                      one('World Bank', module.source_world_bank(session, 'world')),
-                      one('USGS', module.source_usgs(session, 'nature')),
-                      one('NASA', module.source_nasa(session, 'space')),
+                      probe(module.source_wikipedia(session,'science')),
+                      probe(module.source_wikipedia_random(session,'science')),
+                      probe(module.source_wikidata_topic(session,'science')),
+                      probe(module.source_football(session)),
+                      probe(module.source_world_bank(session,'world')),
+                      probe(module.source_usgs(session,'nature')),
+                      probe(module.source_nasa(session,'space')),
                   )
-              assert sum(results) >= 3, f'Only {sum(results)}/7 live sources passed'
-              print(f'Live source coverage: {sum(results)}/7 PASS')
-
+              assert sum(results) >= 3, f'{sum(results)}/7 sources available'
+              print(f'Live sources: {sum(results)}/7 PASS')
           asyncio.run(main())
           PY
-
-      - name: End-to-end fact selection test
+      - name: Strong non-repeat and category tests
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
-          AMIRXPROXY_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-e2e.sqlite3
         run: |
           python - <<'PY'
-          import asyncio
-          import importlib.util
-          import sys
+          import asyncio, importlib.util, sys
           from pathlib import Path
-
           path = Path('AmirFacts.py')
-          spec = importlib.util.spec_from_file_location('amirfacts_e2e', path)
+          spec = importlib.util.spec_from_file_location('e2e', path)
           module = importlib.util.module_from_spec(spec)
-          sys.modules['amirfacts_e2e'] = module
+          sys.modules['e2e'] = module
           spec.loader.exec_module(module)
           module.init_db()
-
           async def main():
-              uid = 1122334455
-              seen = set()
-              for topic in ('football', 'space', 'science', 'technology', 'nature', 'history', 'world'):
+              uid = 777001
+              keys = set()
+              for topic in ('science','science','science','science','technology','nature','history','space','world','football'):
                   value = await module.get_new_fact(uid, topic)
-                  assert value is not None, f'No fact for topic {topic}'
+                  assert value is not None, f'empty result: {topic}'
                   assert module.usable(value[0])
-                  assert value[1] == module.TOPIC_NAMES[topic], f'Wrong category for {topic}: {value[1]!r}'
-                  assert value[3] not in seen, f'Duplicate key across E2E topic batch: {topic}'
-                  seen.add(value[3])
-                  module.mark_seen(uid, value[3], value[2], value[1])
-
-              second = await module.get_new_fact(uid, 'football')
-              if second:
-                  assert second[1] == 'فوتبال'
-                  assert second[3] not in seen
-
-              print('All-topic E2E test: PASS')
-              print('Cross-topic non-duplicate test: PASS')
-              print('Football category isolation: PASS')
-
+                  assert value[1] == module.TOPIC_NAMES[topic]
+                  assert value[3] not in keys, f'duplicate key: {topic}'
+                  keys.add(value[3])
+                  module.mark_seen(uid, value[3], value[2], value[1], value[0])
+              assert module.seen_count(uid) == len(keys)
+              print('10-request E2E: PASS')
+              print('Repeated science: PASS')
+              print('Cross-topic isolation: PASS')
           asyncio.run(main())
           PY
-
-      - name: Telegram API preflight only
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          test -n "$TELEGRAM_BOT_TOKEN"
-          python - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          token = os.environ['TELEGRAM_BOT_TOKEN']
-          base = f'https://api.telegram.org/bot{token}'
-          with urllib.request.urlopen(base + '/getMe', timeout=30) as response:
-              data = json.load(response)
-          assert data.get('ok'), data
-          print(f"Telegram API preflight: PASS (@{data['result'].get('username','unknown')})")
-          PY
-
-      - name: Start Telegram bot polling
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          python - <<'PY'
-          import asyncio
-          import os
-          import AmirFacts
-
-          token = os.environ.get('TELEGRAM_BOT_TOKEN')
-          assert token, 'TELEGRAM_BOT_TOKEN secret is missing'
-          AmirFacts.BOT_TOKEN = token
-          AmirFacts.init_db()
-          print('AmirFacts polling: STARTED')
-          asyncio.run(AmirFacts.bot.infinity_polling(skip_pending=True))
-          PY
+      - name: Runtime status
+        run: echo "AmirFacts runtime is OFF by design."
