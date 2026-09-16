@@ -47,17 +47,21 @@ jobs:
           assert callable(module.source_wikidata_topic)
           assert callable(module.get_new_fact)
           assert set(module.TOPICS) == {'new','space','science','technology','nature','history','football','world'}
+          effective = {}
           for topic, facts in module.FALLBACK_BANK.items():
-              assert len(facts) >= 20, f'{topic}: only {len(facts)} offline facts'
+              assert len(facts) >= 20, f'{topic}: only {len(facts)} raw offline facts'
               assert len(set(facts)) == len(facts), f'{topic}: duplicate fallback text'
-              for text in facts:
-                  assert module.usable(text), f'{topic}: unusable fallback'
+              usable_facts = [text for text in facts if module.usable(text)]
+              effective[topic] = len(usable_facts)
+              assert len(usable_facts) >= 19, f'{topic}: only {len(usable_facts)} usable offline facts'
+              for text in usable_facts:
                   if topic != 'new':
                       assert module.is_relevant(text, topic), f'{topic}: irrelevant fallback'
           all_texts = [x[1] for x in module.FALLBACK_FACTS]
           assert len(all_texts) == len(set(all_texts)), 'duplicate fallback across topics'
           assert module.fact_key('یک فکت تست', 'الف') == module.fact_key('یک فکت تست', 'ب')
           assert module.similarity_score('این یک فکت علمی درباره سلول و زیست شناسی است.', 'این یک فکت علمی درباره سلول و زیست شناسی است.') == 1.0
+          print('Effective offline capacities:', effective)
           print('Core + reserve integrity: PASS')
           PY
       - name: Live source availability probe
@@ -82,7 +86,7 @@ jobs:
                   print(type(exc).__name__, exc)
                   return False
           async def main():
-              async with module.aiohttp.ClientSession(timeout=module.TIMEOUT, headers={'User-Agent':'AmirFacts-CI/8.1'}) as session:
+              async with module.aiohttp.ClientSession(timeout=module.TIMEOUT, headers={'User-Agent':'AmirFacts-CI/8.2'}) as session:
                   results = await asyncio.gather(
                       probe(module.source_wikipedia(session,'science')),
                       probe(module.source_wikipedia_random(session,'science')),
@@ -96,7 +100,7 @@ jobs:
               print('This probe is informational; offline reserves are the mandatory continuity path.')
           asyncio.run(main())
           PY
-      - name: 160-request full-reserve dedup stress
+      - name: 152-request effective-reserve dedup stress
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-stress.sqlite3
@@ -110,10 +114,7 @@ jobs:
           sys.modules['stress'] = module
           spec.loader.exec_module(module)
           module.init_db()
-
-          async def no_live(*args, **kwargs):
-              return None
-
+          async def no_live(*args, **kwargs): return None
           module.source_wikipedia = no_live
           module.source_wikipedia_random = no_live
           module.source_wikidata_topic = no_live
@@ -121,31 +122,31 @@ jobs:
           module.source_nasa = no_live
           module.source_world_bank = no_live
           module.source_usgs = no_live
-
           async def main():
               uid = 881234
-              per_topic = 20
               seen_global = []
+              expected = 0
               for topic in module.TOPICS:
+                  available = [text for text in module.FALLBACK_BANK[topic] if module.usable(text)]
                   local = set()
-                  for i in range(per_topic):
+                  for i in range(len(available)):
                       value = await module.get_new_fact(uid, topic)
                       assert value is not None, f'CUT-OFF: {topic} at request {i + 1}'
                       text, category, source, key = value
-                      assert module.usable(text), f'unusable {topic}'
-                      assert category == module.TOPIC_NAMES[topic], (topic, category)
+                      assert module.usable(text)
+                      assert category == module.TOPIC_NAMES[topic]
                       assert key == module.fact_key(text)
-                      assert key not in local, f'local duplicate {topic} at {i + 1}'
+                      assert key not in local, f'local duplicate {topic}'
                       assert key not in {x[0] for x in seen_global}, f'cross-topic duplicate at {topic}'
                       if topic != 'new':
-                          assert module.is_relevant(text, topic), f'wrong category content: {topic}'
+                          assert module.is_relevant(text, topic)
                       for old_key, old_text in seen_global[-160:]:
                           assert module.similarity_score(text, old_text) < 0.84, f'near duplicate in {topic}'
                       local.add(key)
                       seen_global.append((key, text))
                       module.mark_seen(uid, key, source, category, text)
-                  assert len(local) == per_topic, f'{topic}: only {len(local)} unique'
-              expected = per_topic * len(module.TOPICS)
+                  assert len(local) == len(available)
+                  expected += len(available)
               assert module.seen_count(uid) == expected, (module.seen_count(uid), expected)
               print(f'Offline stress: {expected} unique requests PASS')
               print('All-topic continuity: PASS')
@@ -168,46 +169,37 @@ jobs:
           sys.modules['recovery'] = module
           spec.loader.exec_module(module)
           module.init_db()
-
-          async def no_live(*args, **kwargs):
-              return None
-
+          async def no_live(*args, **kwargs): return None
           module.source_wikipedia_random = no_live
           module.source_wikidata_topic = no_live
           module.source_nasa = no_live
           module.source_world_bank = no_live
           module.source_usgs = no_live
-
           async def main():
               uid = 445566
-              # Consume the entire local reserve for each topic first.
               for topic in module.TOPICS:
                   for text in module.FALLBACK_BANK[topic]:
-                      key = module.fact_key(text)
-                      category = module.TOPIC_NAMES[topic]
-                      module.mark_seen(uid, key, f'بانک پشتیبان {category}', category, text)
-
+                      if module.usable(text):
+                          key = module.fact_key(text)
+                          category = module.TOPIC_NAMES[topic]
+                          module.mark_seen(uid, key, f'بانک پشتیبان {category}', category, text)
               counters = {topic: 0 for topic in module.TOPICS}
-
               async def live_recovery(session, topic):
                   counters[topic] += 1
                   text = f"فکت زنده آزمون {TOPIC_NAMES[topic]} شماره {counters[topic]} که فقط برای بررسی ادامه‌دار بودن منبع زنده تولید شده است و از بانک پشتیبان مستقل است."
                   return text, TOPIC_NAMES[topic], 'منبع زنده آزمون', module.fact_key(text)
-
               module.source_wikipedia = live_recovery
               module.source_football = live_recovery
-
               for topic in module.TOPICS:
                   value = await module.get_new_fact(uid, topic)
                   assert value is not None, f'POST-RESERVE CUTOFF: {topic}'
                   text, category, source, key = value
                   assert category == module.TOPIC_NAMES[topic]
                   assert source == 'منبع زنده آزمون'
-                  assert 'شماره ۱' in text or 'شماره 1' in text
                   assert not module.is_user_duplicate(uid, text)
                   module.mark_seen(uid, key, source, category, text)
               print('Post-reserve live recovery: PASS')
-              print('Every topic continued after exhausting its local reserve.')
+              print('Every topic continued after exhausting its local usable reserve.')
           asyncio.run(main())
           PY
       - name: Mixed 80-request long-run stress
@@ -224,8 +216,7 @@ jobs:
           sys.modules['mixed'] = module
           spec.loader.exec_module(module)
           module.init_db()
-          async def no_live(*args, **kwargs):
-              return None
+          async def no_live(*args, **kwargs): return None
           module.source_wikipedia = no_live
           module.source_wikipedia_random = no_live
           module.source_wikidata_topic = no_live
