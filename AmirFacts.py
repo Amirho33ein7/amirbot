@@ -40,7 +40,7 @@ TOPICS: dict[str, tuple[str, ...]] = {
 }
 TOPIC_NAMES = {"new":"دانستنی", "space":"فضا", "science":"علم", "technology":"فناوری", "nature":"طبیعت", "history":"تاریخ", "football":"فوتبال", "world":"جهان"}
 TOPIC_SIGNALS = {
-    "space": ("فضا", "سیاره", "کهکشان", "ستاره", "ماه", "مریخ", "خورشید", "نجوم", "کیهان", "سیارک", "سحابی", "مدار", "فضاپیما"),
+    "space": ("فضا", "سیاره", "کهکشان", "ستاره", "ماه", "مریخ", "خورشید", "نجوم", "کیهان", "سیارک", "سحابی", "مدار", "فضاپیما", "زهره", "عطارد", "مشتری", "زحل", "اورانوس", "نپتون", "گرفت", "شهاب", "قمر"),
     "science": ("علم", "فیزیک", "شیمی", "زیست", "سلول", "ژن", "مغز", "اتم", "مولکول", "پزشکی", "ریاضی", "آزمایش", "ماده", "انرژی", "اعصاب", "حافظه"),
     "technology": ("رایانه", "اینترنت", "هوش مصنوعی", "فناوری", "برنامه نویسی", "شبکه", "پردازنده", "نرم افزار", "سخت افزار", "ربات", "داده", "الگوریتم", "رمزنگاری"),
     "nature": ("حیوان", "جانور", "گیاه", "اقیانوس", "دریا", "جنگل", "اقلیم", "زیست بوم", "پرنده", "پستاندار", "زمین شناسی", "طبیعت", "حشرات", "ماهی"),
@@ -228,11 +228,7 @@ FALLBACK_BANK: dict[str, tuple[str, ...]] = {
     ),
 }
 
-FALLBACK_FACTS = tuple(
-    (TOPIC_NAMES[topic], text, f"بانک پشتیبان {TOPIC_NAMES[topic]}")
-    for topic, texts in FALLBACK_BANK.items()
-    for text in texts
-)
+FALLBACK_FACTS = tuple((TOPIC_NAMES[topic], text, f"بانک پشتیبان {TOPIC_NAMES[topic]}") for topic, texts in FALLBACK_BANK.items() for text in texts)
 _last_action: dict[int, float] = {}
 
 
@@ -246,37 +242,28 @@ def db() -> sqlite3.Connection:
 def init_db() -> None:
     with db() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS users(user_id INTEGER PRIMARY KEY, first_seen REAL NOT NULL, last_seen REAL NOT NULL)")
-        conn.execute("""CREATE TABLE IF NOT EXISTS seen_facts(
-            user_id INTEGER NOT NULL,
-            fact_key TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            source TEXT NOT NULL,
-            category TEXT NOT NULL,
-            text TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY(user_id, fact_key)
-        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS seen_facts(user_id INTEGER NOT NULL,fact_key TEXT NOT NULL,created_at REAL NOT NULL,source TEXT NOT NULL,category TEXT NOT NULL,text TEXT NOT NULL DEFAULT '',PRIMARY KEY(user_id,fact_key))""")
         columns = {row[1] for row in conn.execute("PRAGMA table_info(seen_facts)").fetchall()}
         if "text" not in columns:
             conn.execute("ALTER TABLE seen_facts ADD COLUMN text TEXT NOT NULL DEFAULT ''")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_seen_user_created ON seen_facts(user_id, created_at DESC)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_seen_user_category ON seen_facts(user_id, category)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_seen_user_created ON seen_facts(user_id,created_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_seen_user_category ON seen_facts(user_id,category)")
 
 
 def remember_user(user_id: int) -> None:
     now = time.time()
     with db() as conn:
-        conn.execute("INSERT INTO users(user_id,first_seen,last_seen) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen", (user_id, now, now))
+        conn.execute("INSERT INTO users(user_id,first_seen,last_seen) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen", (user_id,now,now))
 
 
 def normalize_fact(text: str) -> str:
     text = html.unescape(text or "").casefold()
     text = re.sub(r"https?://\S+", " ", text)
     text = re.sub(r"[\u200c\u200d\u200f\u202a-\u202e]", "", text)
-    text = text.translate(str.maketrans({"ي": "ی", "ى": "ی", "ك": "ک", "ة": "ه"}))
-    text = text.replace("٫", ".").replace("٬", ",")
+    text = text.translate(str.maketrans({"ي":"ی","ى":"ی","ك":"ک","ة":"ه"}))
+    text = text.replace("٫",".").replace("٬",",")
     text = re.sub(r"[«»\"'“”`()\[\]{}،,؛:!؟?./\\|_+=*-]+", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def fact_key(text: str, source: str = "") -> str:
@@ -285,12 +272,12 @@ def fact_key(text: str, source: str = "") -> str:
 
 def has_seen(user_id: int, key: str) -> bool:
     with db() as conn:
-        return conn.execute("SELECT 1 FROM seen_facts WHERE user_id=? AND fact_key=? LIMIT 1", (user_id, key)).fetchone() is not None
+        return conn.execute("SELECT 1 FROM seen_facts WHERE user_id=? AND fact_key=? LIMIT 1", (user_id,key)).fetchone() is not None
 
 
 def mark_seen(user_id: int, key: str, source: str, category: str, text: str = "") -> None:
     with db() as conn:
-        conn.execute("INSERT OR IGNORE INTO seen_facts(user_id,fact_key,created_at,source,category,text) VALUES(?,?,?,?,?,?)", (user_id, key, time.time(), source, category, clean(text)))
+        conn.execute("INSERT OR IGNORE INTO seen_facts(user_id,fact_key,created_at,source,category,text) VALUES(?,?,?,?,?,?)", (user_id,key,time.time(),source,category,clean(text)))
 
 
 def seen_count(user_id: int) -> int:
@@ -306,7 +293,7 @@ def clean(text: str) -> str:
     text = re.sub(r"https?://\S+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > MAX_FACT:
-        text = text[:MAX_FACT].rsplit(" ", 1)[0] + "…"
+        text = text[:MAX_FACT].rsplit(" ",1)[0] + "…"
     return text
 
 
@@ -321,22 +308,24 @@ def usable(text: str) -> bool:
 
 
 def is_relevant(text: str, topic: str | None) -> bool:
-    if topic in (None, "new"):
+    if topic in (None,"new"):
+        return True
+    if text in FALLBACK_BANK.get(topic, ()):
         return True
     hay = normalize_fact(text)
-    return any(signal in hay for signal in TOPIC_SIGNALS.get(topic, ()))
+    return any(signal in hay for signal in TOPIC_SIGNALS.get(topic,()))
 
 
 def word_shingles(text: str) -> set[str]:
-    stop = {"است", "در", "از", "به", "با", "برای", "و", "که", "را", "این", "آن", "یک", "های", "می", "شود", "دارد"}
-    return {w for w in normalize_fact(text).split() if len(w) > 1 and w not in stop}
+    stop = {"است","در","از","به","با","برای","و","که","را","این","آن","یک","های","می","شود","دارد"}
+    return {w for w in normalize_fact(text).split() if len(w)>1 and w not in stop}
 
 
 def char_shingles(text: str, size: int = 4) -> set[str]:
-    value = normalize_fact(text).replace(" ", "")
+    value = normalize_fact(text).replace(" ","")
     if len(value) <= size:
         return {value} if value else set()
-    return {value[i:i + size] for i in range(len(value) - size + 1)}
+    return {value[i:i+size] for i in range(len(value)-size+1)}
 
 
 def jaccard(a: set[str], b: set[str]) -> float:
@@ -348,24 +337,24 @@ def jaccard(a: set[str], b: set[str]) -> float:
 def similarity_score(a: str, b: str) -> float:
     if fact_key(a) == fact_key(b):
         return 1.0
-    return max(jaccard(word_shingles(a), word_shingles(b)), jaccard(char_shingles(a), char_shingles(b)))
+    return max(jaccard(word_shingles(a),word_shingles(b)), jaccard(char_shingles(a),char_shingles(b)))
 
 
 def is_user_duplicate(user_id: int, text: str) -> bool:
-    if has_seen(user_id, fact_key(text)):
+    if has_seen(user_id,fact_key(text)):
         return True
     with db() as conn:
         rows = conn.execute("SELECT text FROM seen_facts WHERE user_id=? AND text!='' ORDER BY created_at DESC LIMIT 750", (user_id,)).fetchall()
-    return any(similarity_score(text, row[0]) >= 0.84 for row in rows)
+    return any(similarity_score(text,row[0]) >= 0.84 for row in rows)
 
 
-async def get_json(session: aiohttp.ClientSession, url: str, params: dict[str, Any] | None = None) -> Any:
+async def get_json(session: aiohttp.ClientSession, url: str, params: dict[str,Any] | None = None) -> Any:
     try:
-        async with session.get(url, params=params, allow_redirects=True) as response:
+        async with session.get(url,params=params,allow_redirects=True) as response:
             if response.status != 200:
                 return None
             return await response.json(content_type=None)
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+    except (aiohttp.ClientError,asyncio.TimeoutError,ValueError):
         return None
 
 
@@ -373,13 +362,13 @@ def variants(extract: str) -> list[str]:
     extract = clean(extract)
     if not extract:
         return []
-    sentences = [s.strip() for s in re.split(r"(?<=[\.؟!])\s+", extract) if s.strip()]
+    sentences = [s.strip() for s in re.split(r"(?<=[\.؟!])\s+",extract) if s.strip()]
     if len(sentences) <= 2:
         return [extract]
     result = [extract]
-    windows = [(0, 2), (1, 3), (2, 4), (0, 3), (1, 4)]
+    windows = [(0,2),(1,3),(2,4),(0,3),(1,4)]
     random.shuffle(windows)
-    for a, b in windows:
+    for a,b in windows:
         candidate = " ".join(sentences[a:b]).strip()
         if candidate and candidate not in result:
             result.append(candidate)
@@ -387,149 +376,127 @@ def variants(extract: str) -> list[str]:
 
 
 async def source_wikipedia(session: aiohttp.ClientSession, topic: str | None):
-    queries = list(TOPICS.get(topic or "new", TOPICS["new"]))
+    queries = list(TOPICS.get(topic or "new",TOPICS["new"]))
     random.shuffle(queries)
     for query in queries[:12]:
-        data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {"action":"query","format":"json","generator":"search","gsrsearch":query,"gsrnamespace":0,"gsrlimit":25,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"})
-        if not isinstance(data, dict):
+        data = await get_json(session,"https://fa.wikipedia.org/w/api.php",{"action":"query","format":"json","generator":"search","gsrsearch":query,"gsrnamespace":0,"gsrlimit":25,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"})
+        if not isinstance(data,dict):
             continue
-        pages = list(data.get("query", {}).get("pages", {}).values())
-        random.shuffle(pages)
+        pages = list(data.get("query",{}).get("pages",{}).values()); random.shuffle(pages)
         for page in pages:
-            title = clean(str(page.get("title", "")))
-            extract = clean(str(page.get("extract", "")))
-            url = str(page.get("fullurl", ""))
+            title=clean(str(page.get("title",""))); extract=clean(str(page.get("extract",""))); url=str(page.get("fullurl",""))
             if not title or not url.startswith("https://fa.wikipedia.org/"):
                 continue
-            if any(prefix in title for prefix in ("کاربر:", "بحث:", "الگو:", "پرونده:", "رده:", "فهرست ")):
-                continue
-            if not is_relevant(title + " " + extract, topic):
+            if any(prefix in title for prefix in ("کاربر:","بحث:","الگو:","پرونده:","رده:","فهرست ")) or not is_relevant(title+" "+extract,topic):
                 continue
             for text in variants(extract):
                 if usable(text):
-                    return text, TOPIC_NAMES.get(topic or "new", "دانستنی"), "ویکی‌پدیای فارسی", fact_key(text)
+                    return text,TOPIC_NAMES.get(topic or "new","دانستنی"),"ویکی‌پدیای فارسی",fact_key(text)
     return None
 
 
 async def source_wikipedia_random(session: aiohttp.ClientSession, topic: str | None):
     for _ in range(3):
-        data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {"action":"query","format":"json","generator":"random","grnnamespace":0,"grnlimit":35,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"})
-        if not isinstance(data, dict):
+        data = await get_json(session,"https://fa.wikipedia.org/w/api.php",{"action":"query","format":"json","generator":"random","grnnamespace":0,"grnlimit":35,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"})
+        if not isinstance(data,dict):
             continue
-        pages = list(data.get("query", {}).get("pages", {}).values())
-        random.shuffle(pages)
+        pages=list(data.get("query",{}).get("pages",{}).values()); random.shuffle(pages)
         for page in pages:
-            title = clean(str(page.get("title", "")))
-            extract = clean(str(page.get("extract", "")))
-            url = str(page.get("fullurl", ""))
-            if not url.startswith("https://fa.wikipedia.org/") or any(prefix in title for prefix in ("کاربر:", "بحث:", "الگو:", "پرونده:", "رده:", "فهرست ")):
+            title=clean(str(page.get("title",""))); extract=clean(str(page.get("extract",""))); url=str(page.get("fullurl",""))
+            if not url.startswith("https://fa.wikipedia.org/") or any(prefix in title for prefix in ("کاربر:","بحث:","الگو:","پرونده:","رده:","فهرست ")):
                 continue
-            if not is_relevant(title + " " + extract, topic):
+            if not is_relevant(title+" "+extract,topic):
                 continue
             for text in variants(extract):
                 if usable(text):
-                    return text, TOPIC_NAMES.get(topic or "new", "دانستنی"), "ویکی‌پدیای فارسی — تصادفی", fact_key(text)
+                    return text,TOPIC_NAMES.get(topic or "new","دانستنی"),"ویکی‌پدیای فارسی — تصادفی",fact_key(text)
     return None
 
 
 async def source_wikidata_topic(session: aiohttp.ClientSession, topic: str | None):
-    topic = topic or "new"
-    queries = list(TOPICS.get(topic, TOPICS["new"]))
-    random.shuffle(queries)
+    topic=topic or "new"; queries=list(TOPICS.get(topic,TOPICS["new"])); random.shuffle(queries)
     for query in queries[:12]:
-        data = await get_json(session, "https://www.wikidata.org/w/api.php", {"action":"wbsearchentities","search":query,"language":"fa","uselang":"fa","format":"json","limit":25,"type":"item"})
-        if not isinstance(data, dict):
+        data=await get_json(session,"https://www.wikidata.org/w/api.php",{"action":"wbsearchentities","search":query,"language":"fa","uselang":"fa","format":"json","limit":25,"type":"item"})
+        if not isinstance(data,dict):
             continue
-        hits = data.get("search", [])
-        random.shuffle(hits)
+        hits=data.get("search",[]); random.shuffle(hits)
         for hit in hits:
-            label = clean(str(hit.get("label", "")))
-            desc = clean(str(hit.get("description", "")))
+            label=clean(str(hit.get("label",""))); desc=clean(str(hit.get("description","")))
             if not (label and desc):
                 continue
-            text = clean(f"در موضوع {TOPIC_NAMES.get(topic, 'دانستنی')}، «{label}» {desc} است.")
-            if usable(text) and is_relevant(text, topic):
-                return text, TOPIC_NAMES.get(topic, "دانستنی"), "ویکی‌داده", fact_key(text)
+            text=clean(f"در موضوع {TOPIC_NAMES.get(topic,'دانستنی')}، «{label}» {desc} است.")
+            if usable(text) and is_relevant(text,topic):
+                return text,TOPIC_NAMES.get(topic,"دانستنی"),"ویکی‌داده",fact_key(text)
     return None
 
 
 async def source_football(session: aiohttp.ClientSession):
-    for loader in (source_wikipedia, source_wikipedia_random, source_wikidata_topic):
+    for loader in (source_wikipedia,source_wikipedia_random,source_wikidata_topic):
         try:
-            value = await loader(session, "football")
+            value=await loader(session,"football")
         except Exception:
-            value = None
-        if value and value[1] == "فوتبال" and usable(value[0]) and is_relevant(value[0], "football"):
-            return value[0], "فوتبال", value[2] + " — فوتبال", value[3]
+            value=None
+        if value and value[1]=="فوتبال" and usable(value[0]) and is_relevant(value[0],"football"):
+            return value[0],"فوتبال",value[2]+" — فوتبال",value[3]
     return None
 
 
 async def source_nasa(session: aiohttp.ClientSession, topic: str | None):
-    if topic not in (None, "space"):
+    if topic not in (None,"space"):
         return None
     for _ in range(6):
-        offset = random.randint(1, 3500)
-        day = time.strftime("%Y-%m-%d", time.gmtime(time.time() - offset * 86400))
-        data = await get_json(session, "https://api.nasa.gov/planetary/apod", {"api_key": os.getenv("NASA_API_KEY", "DEMO_KEY"), "date": day})
-        if not isinstance(data, dict) or not data.get("date"):
+        offset=random.randint(1,3500); day=time.strftime("%Y-%m-%d",time.gmtime(time.time()-offset*86400))
+        data=await get_json(session,"https://api.nasa.gov/planetary/apod",{"api_key":os.getenv("NASA_API_KEY","DEMO_KEY"),"date":day})
+        if not isinstance(data,dict) or not data.get("date"):
             continue
-        title = clean(str(data.get("title", "محتوای نجومی")))
-        media = "تصویر" if data.get("media_type") == "image" else "رسانه"
-        text = clean(f"ناسا در آرشیو تصویر نجومی روز، در تاریخ {data['date']} محتوایی با عنوان «{title}» ثبت کرده است؛ نوع این محتوا {media} است.")
+        title=clean(str(data.get("title","محتوای نجومی"))); media="تصویر" if data.get("media_type")=="image" else "رسانه"
+        text=clean(f"ناسا در آرشیو تصویر نجومی روز، در تاریخ {data['date']} محتوایی با عنوان «{title}» ثبت کرده است؛ نوع این محتوا {media} است.")
         if usable(text):
-            return text, "فضا", "ناسا", fact_key(text)
+            return text,"فضا","ناسا",fact_key(text)
     return None
 
 
-WORLD_COUNTRIES = {"IRN":"ایران","FRA":"فرانسه","DEU":"آلمان","BRA":"برزیل","JPN":"ژاپن","IND":"هند","CAN":"کانادا","ESP":"اسپانیا","ITA":"ایتالیا","TUR":"ترکیه","EGY":"مصر","AUS":"استرالیا","MEX":"مکزیک","KOR":"کره جنوبی","ZAF":"آفریقای جنوبی","GBR":"بریتانیا","USA":"ایالات متحده","NOR":"نروژ","SWE":"سوئد","CHN":"چین"}
-WORLD_INDICATORS = {"SP.POP.TOTL":"جمعیت","NY.GDP.MKTP.CD":"تولید ناخالص داخلی","SP.DYN.LE00.IN":"امید به زندگی","IT.NET.USER.ZS":"درصد استفاده از اینترنت","EG.ELC.ACCS.ZS":"درصد دسترسی به برق","EN.ATM.CO2E.PC":"انتشار سرانه دی‌اکسیدکربن"}
+WORLD_COUNTRIES={"IRN":"ایران","FRA":"فرانسه","DEU":"آلمان","BRA":"برزیل","JPN":"ژاپن","IND":"هند","CAN":"کانادا","ESP":"اسپانیا","ITA":"ایتالیا","TUR":"ترکیه","EGY":"مصر","AUS":"استرالیا","MEX":"مکزیک","KOR":"کره جنوبی","ZAF":"آفریقای جنوبی","GBR":"بریتانیا","USA":"ایالات متحده","NOR":"نروژ","SWE":"سوئد","CHN":"چین"}
+WORLD_INDICATORS={"SP.POP.TOTL":"جمعیت","NY.GDP.MKTP.CD":"تولید ناخالص داخلی","SP.DYN.LE00.IN":"امید به زندگی","IT.NET.USER.ZS":"درصد استفاده از اینترنت","EG.ELC.ACCS.ZS":"درصد دسترسی به برق","EN.ATM.CO2E.PC":"انتشار سرانه دی‌اکسیدکربن"}
 
 
 async def source_world_bank(session: aiohttp.ClientSession, topic: str | None):
-    if topic not in (None, "world"):
+    if topic not in (None,"world"):
         return None
-    indicator, name = random.choice(list(WORLD_INDICATORS.items()))
-    code, country = random.choice(list(WORLD_COUNTRIES.items()))
-    data = await get_json(session, f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}", {"format":"json", "per_page":40})
-    if not isinstance(data, list) or len(data) < 2 or not isinstance(data[1], list):
+    indicator,name=random.choice(list(WORLD_INDICATORS.items())); code,country=random.choice(list(WORLD_COUNTRIES.items()))
+    data=await get_json(session,f"https://api.worldbank.org/v2/country/{code}/indicator/{indicator}",{"format":"json","per_page":40})
+    if not isinstance(data,list) or len(data)<2 or not isinstance(data[1],list):
         return None
-    rows = [r for r in data[1] if r.get("value") is not None]
+    rows=[r for r in data[1] if r.get("value") is not None]
     if not rows:
         return None
-    row = random.choice(rows)
+    row=random.choice(rows)
     try:
-        value = float(row["value"])
-        number = f"{value:,.2f}" if indicator not in ("SP.POP.TOTL", "NY.GDP.MKTP.CD") else f"{int(value):,}"
-        number = number.replace(",", "،").replace(".", "٫")
-    except (TypeError, ValueError):
+        value=float(row["value"]); number=f"{value:,.2f}" if indicator not in ("SP.POP.TOTL","NY.GDP.MKTP.CD") else f"{int(value):,}"; number=number.replace(",","،").replace(".","٫")
+    except (TypeError,ValueError):
         return None
-    if indicator in ("IT.NET.USER.ZS", "EG.ELC.ACCS.ZS"):
+    if indicator in ("IT.NET.USER.ZS","EG.ELC.ACCS.ZS"):
         number += " درصد"
-    text = clean(f"طبق داده‌های بانک جهانی، شاخص {name} برای کشور {country} در سال {row.get('date')} حدود {number} ثبت شده است.")
-    return (text, "جهان", "بانک جهانی", fact_key(text)) if usable(text) else None
+    text=clean(f"طبق داده‌های بانک جهانی، شاخص {name} برای کشور {country} در سال {row.get('date')} حدود {number} ثبت شده است.")
+    return (text,"جهان","بانک جهانی",fact_key(text)) if usable(text) else None
 
 
 async def source_usgs(session: aiohttp.ClientSession, topic: str | None):
-    if topic not in (None, "nature"):
+    if topic not in (None,"nature"):
         return None
-    feed = random.choice(("significant_month", "4.5_month", "2.5_month", "1.0_month"))
-    data = await get_json(session, f"https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/{feed}.geojson")
-    if not isinstance(data, dict) or not data.get("features"):
+    feed=random.choice(("significant_month","4.5_month","2.5_month","1.0_month")); data=await get_json(session,f"https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/{feed}.geojson")
+    if not isinstance(data,dict) or not data.get("features"):
         return None
-    item = random.choice(data["features"])
-    props = item.get("properties", {})
-    magnitude = props.get("mag")
-    event_id = str(item.get("id", ""))
-    place = clean(str(props.get("place", "یک نقطه ثبت‌شده")))
+    item=random.choice(data["features"]); props=item.get("properties",{}); magnitude=props.get("mag"); event_id=str(item.get("id","")); place=clean(str(props.get("place","یک نقطه ثبت‌شده")))
     if magnitude is None or not event_id:
         return None
-    text = clean(f"در داده‌های سازمان زمین‌شناسی آمریکا، زمین‌لرزه‌ای در {place} با بزرگای حدود {float(magnitude):.1f} و شناسه رویداد {event_id} ثبت شده است.")
-    return (text, "طبیعت", "سازمان زمین‌شناسی آمریکا", fact_key(text)) if usable(text) else None
+    text=clean(f"در داده‌های سازمان زمین‌شناسی آمریکا، زمین‌لرزه‌ای در {place} با بزرگای حدود {float(magnitude):.1f} و شناسه رویداد {event_id} ثبت شده است.")
+    return (text,"طبیعت","سازمان زمین‌شناسی آمریکا",fact_key(text)) if usable(text) else None
 
 
-async def _try_loader(loader, session, topic):
+async def _try_loader(loader,session,topic):
     try:
-        return await loader(session, topic)
+        return await loader(session,topic)
     except Exception:
         return None
 
@@ -537,76 +504,66 @@ async def _try_loader(loader, session, topic):
 async def get_new_fact(user_id: int, topic: str | None = None):
     remember_user(user_id)
     if topic not in TOPICS:
-        topic = "new"
-    if topic == "football":
-        loaders: list[Callable[..., Awaitable[Any]]] = [source_football]
+        topic="new"
+    if topic=="football":
+        loaders: list[Callable[...,Awaitable[Any]]] = [source_football]
     else:
-        loaders = [source_wikipedia, source_wikipedia_random, source_wikidata_topic]
-        if topic in (None, "space"):
-            loaders.append(source_nasa)
-        if topic in (None, "world"):
-            loaders.append(source_world_bank)
-        if topic in (None, "nature"):
-            loaders.append(source_usgs)
+        loaders=[source_wikipedia,source_wikipedia_random,source_wikidata_topic]
+        if topic in (None,"space"): loaders.append(source_nasa)
+        if topic in (None,"world"): loaders.append(source_world_bank)
+        if topic in (None,"nature"): loaders.append(source_usgs)
 
-    async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent":"AmirFacts/8.0"}) as session:
+    async with aiohttp.ClientSession(timeout=TIMEOUT,headers={"User-Agent":"AmirFacts/8.0"}) as session:
         for _ in range(12):
-            order = list(loaders)
-            random.shuffle(order)
-            results = await asyncio.gather(*[_try_loader(loader, session, topic) for loader in order], return_exceptions=False)
+            order=list(loaders); random.shuffle(order)
+            results=await asyncio.gather(*[_try_loader(loader,session,topic) for loader in order],return_exceptions=False)
             for value in results:
                 if not value:
                     continue
-                text, category, source, _ = value
-                if topic != "new" and category != TOPIC_NAMES[topic]:
+                text,category,source,_=value
+                if topic!="new" and category!=TOPIC_NAMES[topic]:
                     continue
-                if not usable(text) or not is_relevant(text, topic):
+                if not usable(text) or not is_relevant(text,topic) or is_user_duplicate(user_id,text):
                     continue
-                if is_user_duplicate(user_id, text):
-                    continue
-                return text, category, source, fact_key(text)
+                return text,category,source,fact_key(text)
 
-    if topic == "new":
-        offline_candidates = [(TOPIC_NAMES["new"], text, "بانک پشتیبان دانستنی") for text in FALLBACK_BANK["new"]]
+    if topic=="new":
+        offline_candidates=[(TOPIC_NAMES["new"],text,"بانک پشتیبان دانستنی") for text in FALLBACK_BANK["new"]]
     else:
-        offline_candidates = [(TOPIC_NAMES[topic], text, f"بانک پشتیبان {TOPIC_NAMES[topic]}") for text in FALLBACK_BANK[topic]]
+        offline_candidates=[(TOPIC_NAMES[topic],text,f"بانک پشتیبان {TOPIC_NAMES[topic]}") for text in FALLBACK_BANK[topic]]
     random.shuffle(offline_candidates)
-    for category, text, source in offline_candidates:
-        if not usable(text) or (topic != "new" and not is_relevant(text, topic)):
+    for category,text,source in offline_candidates:
+        if not usable(text) or is_user_duplicate(user_id,text):
             continue
-        if is_user_duplicate(user_id, text):
-            continue
-        return text, category, source, fact_key(text)
+        return text,category,source,fact_key(text)
 
-    async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent":"AmirFacts/8.0-last-chance"}) as session:
+    async with aiohttp.ClientSession(timeout=TIMEOUT,headers={"User-Agent":"AmirFacts/8.0-last-chance"}) as session:
         for _ in range(48):
-            order = list(loaders)
-            random.shuffle(order)
-            value = await _try_loader(random.choice(order), session, topic)
+            order=list(loaders); random.shuffle(order); value=await _try_loader(random.choice(order),session,topic)
             if not value:
                 continue
-            text, category, source, _ = value
-            if topic != "new" and category != TOPIC_NAMES[topic]:
+            text,category,source,_=value
+            if topic!="new" and category!=TOPIC_NAMES[topic]:
                 continue
-            if usable(text) and is_relevant(text, topic) and not is_user_duplicate(user_id, text):
-                return text, category, source, fact_key(text)
+            if usable(text) and is_relevant(text,topic) and not is_user_duplicate(user_id,text):
+                return text,category,source,fact_key(text)
     return None
 
 
 def allowed(user_id: int) -> bool:
-    now = time.time()
-    if now - _last_action.get(user_id, 0.0) < COOLDOWN:
+    now=time.time()
+    if now-_last_action.get(user_id,0.0)<COOLDOWN:
         return False
-    _last_action[user_id] = now
+    _last_action[user_id]=now
     return True
 
 
 def keyboard() -> types.InlineKeyboardMarkup:
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    rows = ((("🎲 فکت جدید", "fact:new"), ("⚽ فوتبال", "fact:football")), (("🌌 فضا", "fact:space"), ("🧠 علم", "fact:science")), (("💻 فناوری", "fact:technology"), ("🌿 طبیعت", "fact:nature")), (("🏛️ تاریخ", "fact:history"), ("🌍 جهان", "fact:world")))
+    kb=types.InlineKeyboardMarkup(row_width=2)
+    rows=((("🎲 فکت جدید","fact:new"),("⚽ فوتبال","fact:football")),(("🌌 فضا","fact:space"),("🧠 علم","fact:science")),(("💻 فناوری","fact:technology"),("🌿 طبیعت","fact:nature")),(("🏛️ تاریخ","fact:history"),("🌍 جهان","fact:world")))
     for row in rows:
-        kb.add(*[types.InlineKeyboardButton(text, callback_data=data) for text, data in row])
-    kb.add(types.InlineKeyboardButton("📊 آمار من", callback_data="stats"))
+        kb.add(*[types.InlineKeyboardButton(text,callback_data=data) for text,data in row])
+    kb.add(types.InlineKeyboardButton("📊 آمار من",callback_data="stats"))
     return kb
 
 
@@ -614,74 +571,66 @@ def render(text: str, category: str, source: str) -> str:
     return f"✨ <b>فکت جدید</b>\n\n{html.escape(text)}\n\n🏷️ <b>دسته:</b> {html.escape(category)}\n📚 <b>منبع:</b> {html.escape(source)}"
 
 
-if not BOT_TOKEN or BOT_TOKEN == "TOKEN RO INJA BEZAR":
+if not BOT_TOKEN or BOT_TOKEN=="TOKEN RO INJA BEZAR":
     raise RuntimeError("Telegram bot token is missing")
+bot=AsyncTeleBot(BOT_TOKEN,parse_mode="HTML")
 
-bot = AsyncTeleBot(BOT_TOKEN, parse_mode="HTML")
 
-
-@bot.message_handler(commands=["start", "help"])
+@bot.message_handler(commands=["start","help"])
 async def start_handler(message: types.Message) -> None:
     remember_user(message.from_user.id)
-    await bot.send_message(message.chat.id, "🚀 <b>AmirFacts</b>\n\nفکت‌های فارسی، منبع‌دار و غیرتکراری.", reply_markup=keyboard())
+    await bot.send_message(message.chat.id,"🚀 <b>AmirFacts</b>\n\nفکت‌های فارسی، منبع‌دار و غیرتکراری.",reply_markup=keyboard())
 
 
 async def send_fact(chat_id: int, user_id: int, topic: str | None = None) -> None:
     if not allowed(user_id):
-        await bot.send_message(chat_id, "⏳ یه کم آروم‌تر 😄")
-        return
-    await bot.send_dice(chat_id, emoji="🎲")
-    status = await bot.send_message(chat_id, "🔎 <i>از چند منبع دنبال یک فکت تازه و غیرتکراری می‌گردم...</i>")
-    result = await get_new_fact(user_id, topic)
+        await bot.send_message(chat_id,"⏳ یه کم آروم‌تر 😄"); return
+    await bot.send_dice(chat_id,emoji="🎲")
+    status=await bot.send_message(chat_id,"🔎 <i>از چند منبع دنبال یک فکت تازه و غیرتکراری می‌گردم...</i>")
+    result=await get_new_fact(user_id,topic)
     if not result:
-        await bot.edit_message_text("🔄 فعلاً یک فکت قابل‌اعتماد و کاملاً جدید برای این عنوان پیدا نشد.", chat_id=chat_id, message_id=status.message_id, reply_markup=keyboard())
-        return
-    text, category, source, key = result
-    if not usable(text) or (topic and category != TOPIC_NAMES[topic]) or is_user_duplicate(user_id, text):
-        await bot.edit_message_text("🔄 مورد تکراری یا نامعتبر فیلتر شد؛ دوباره بزن.", chat_id=chat_id, message_id=status.message_id, reply_markup=keyboard())
-        return
-    mark_seen(user_id, key, source, category, text)
-    await bot.edit_message_text(render(text, category, source), chat_id=chat_id, message_id=status.message_id, reply_markup=keyboard())
+        await bot.edit_message_text("🔄 فعلاً یک فکت قابل‌اعتماد و کاملاً جدید برای این عنوان پیدا نشد.",chat_id=chat_id,message_id=status.message_id,reply_markup=keyboard()); return
+    text,category,source,key=result
+    if not usable(text) or (topic and category!=TOPIC_NAMES[topic]) or is_user_duplicate(user_id,text):
+        await bot.edit_message_text("🔄 مورد تکراری یا نامعتبر فیلتر شد؛ دوباره بزن.",chat_id=chat_id,message_id=status.message_id,reply_markup=keyboard()); return
+    mark_seen(user_id,key,source,category,text)
+    await bot.edit_message_text(render(text,category,source),chat_id=chat_id,message_id=status.message_id,reply_markup=keyboard())
 
 
 @bot.message_handler(commands=["fact"])
 async def fact_command(message: types.Message) -> None:
-    await send_fact(message.chat.id, message.from_user.id)
+    await send_fact(message.chat.id,message.from_user.id)
 
 
 @bot.message_handler(commands=["stats"])
 async def stats_command(message: types.Message) -> None:
-    await send_stats(message.chat.id, message.from_user.id)
+    await send_stats(message.chat.id,message.from_user.id)
 
 
 async def send_stats(chat_id: int, user_id: int) -> None:
-    await bot.send_message(chat_id, f"📊 <b>آمار تو</b>\n\n🧠 فکت‌های دیده‌شده: <b>{seen_count(user_id)}</b>", reply_markup=keyboard())
+    await bot.send_message(chat_id,f"📊 <b>آمار تو</b>\n\n🧠 فکت‌های دیده‌شده: <b>{seen_count(user_id)}</b>",reply_markup=keyboard())
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "fact:new")
+@bot.callback_query_handler(func=lambda call: call.data=="fact:new")
 async def new_fact_callback(call: types.CallbackQuery) -> None:
-    await bot.answer_callback_query(call.id)
-    await send_fact(call.message.chat.id, call.from_user.id)
+    await bot.answer_callback_query(call.id); await send_fact(call.message.chat.id,call.from_user.id)
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("fact:") and call.data != "fact:new")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("fact:") and call.data!="fact:new")
 async def topic_callback(call: types.CallbackQuery) -> None:
-    await bot.answer_callback_query(call.id)
-    topic = call.data.split(":", 1)[1]
+    await bot.answer_callback_query(call.id); topic=call.data.split(":",1)[1]
     if topic in TOPICS:
-        await send_fact(call.message.chat.id, call.from_user.id, topic)
+        await send_fact(call.message.chat.id,call.from_user.id,topic)
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "stats")
+@bot.callback_query_handler(func=lambda call: call.data=="stats")
 async def stats_callback(call: types.CallbackQuery) -> None:
-    await bot.answer_callback_query(call.id)
-    await send_stats(call.message.chat.id, call.from_user.id)
+    await bot.answer_callback_query(call.id); await send_stats(call.message.chat.id,call.from_user.id)
 
 
 async def main() -> None:
-    init_db()
-    print("AmirFacts configured. Polling is OFF by design.")
+    init_db(); print("AmirFacts configured. Polling is OFF by design.")
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     asyncio.run(main())
