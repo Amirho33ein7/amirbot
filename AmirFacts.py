@@ -24,7 +24,7 @@ from telebot.async_telebot import AsyncTeleBot
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("AMIRXPROXY_BOT_TOKEN") or "TOKEN RO INJA BEZAR"
 DB_PATH = Path(os.getenv("AMIRFACTS_DB", "amirfacts.sqlite3"))
 TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5, sock_read=10)
-MIN_FACT = 70
+MIN_FACT = 55
 MAX_FACT = 700
 COOLDOWN = 2.0
 
@@ -49,8 +49,6 @@ TOPIC_SIGNALS = {
     "world": ("جمعیت", "کشور", "اقتصاد", "تولید ناخالص", "انرژی", "اینترنت", "سلامت", "آموزش", "آب", "جهان", "آمار", "جغرافیا", "قاره"),
 }
 
-# Large local reserves. They are intentionally separated by topic so that one
-# exhausted category can never consume another category's reserve.
 FALLBACK_BANK: dict[str, tuple[str, ...]] = {
     "new": (
         "عدد پی نسبت محیط دایره به قطر آن است و مقدار تقریبی آن ۳٫۱۴۱۵۹ در نظر گرفته می‌شود.",
@@ -66,7 +64,7 @@ FALLBACK_BANK: dict[str, tuple[str, ...]] = {
         "صدای انسان نتیجه ارتعاش تارهای صوتی و شکل‌دهی موج صوتی توسط مجرای گفتار است.",
         "مغز برای کارکرد طبیعی خود به انرژی و اکسیژن نیاز دارد و جریان خون نقش مهمی در این تأمین دارد.",
         "ماه نور تولید نمی‌کند و بخش روشن آن از بازتاب نور خورشید دیده می‌شود.",
-        "فشار هوا با افزایش ارتفاع از سطح دریا معمولاً کاهش پیدا می‌کند.",
+        "فشار هوا با افزایش ارتفاع از سطح دریا معمولاً کاهش پیدا می‌کند و همین تغییر در هواشناسی اهمیت دارد.",
         "یخ چگالی کمتری از آب مایع دارد و به همین دلیل روی آب شناور می‌شود.",
         "پنجره‌های دو جداره با ایجاد یک لایه گاز بین دو شیشه می‌توانند انتقال گرما را کاهش دهند.",
         "رودخانه‌ها در طول مسیر خود با فرسایش و جابه‌جایی رسوبات می‌توانند شکل سطح زمین را تغییر دهند.",
@@ -88,21 +86,21 @@ FALLBACK_BANK: dict[str, tuple[str, ...]] = {
         "کهکشان راه شیری یک کهکشان مارپیچی است که منظومه شمسی در یکی از بازوهای آن قرار دارد.",
         "سیاه‌چاله ناحیه‌ای از فضاست که گرانش آن به اندازه‌ای شدید است که نور نیز نمی‌تواند از افق رویدادش بگریزد.",
         "شهاب‌واره جسمی کوچک در فضاست و وقتی بخشی از آن در جو می‌سوزد و می‌درخشد، شهاب دیده می‌شود.",
-        "سحابی‌ها ابرهای گسترده‌ای از گاز و غبار میان‌ستاره‌ای هستند و برخی از آن‌ها محل تولد ستاره‌ها هستند.",
+        "سحابی‌ها ابرهای گسترده‌ای از گاز و غبار میان‌ستاره‌ای هستند و برخی محل تولد ستاره‌ها هستند.",
         "گرفت خورشید زمانی رخ می‌دهد که ماه در مسیر دید میان زمین و خورشید قرار می‌گیرد.",
         "گرفت ماه زمانی رخ می‌دهد که زمین میان خورشید و ماه قرار بگیرد و سایه زمین روی ماه بیفتد.",
         "فضاپیماهای بدون سرنشین برای مطالعه سیارات، قمرها و اجرام دوردست اطلاعات علمی ارزشمندی ارسال کرده‌اند.",
-        "سرعت نور در خلأ دقیقاً ۲۹۹۷۹۲۴۵۸ متر بر ثانیه تعریف شده است.",
-        "عطارد نزدیک‌ترین سیاره به خورشید است و به دلیل نزدیکی زیاد، سال آن تنها حدود ۸۸ روز زمینی طول می‌کشد.",
-        "زهره داغ‌ترین سیاره منظومه شمسی در سطح خود است و جو ضخیم آن بخش زیادی از گرما را در خود نگه می‌دارد.",
+        "سرعت نور در خلأ دقیقاً ۲۹۹۷۹۲۴۵۸ متر بر ثانیه تعریف شده است و در فیزیک بنیادی اهمیت دارد.",
+        "عطارد نزدیک‌ترین سیاره به خورشید است و سال آن تنها حدود ۸۸ روز زمینی طول می‌کشد.",
+        "زهره داغ‌ترین سیاره منظومه شمسی در سطح خود است و جو ضخیم آن گرما را در خود نگه می‌دارد.",
     ),
     "science": (
         "سرعت نور در خلأ دقیقاً ۲۹۹۷۹۲۴۵۸ متر بر ثانیه تعریف شده است و یکی از ثابت‌های بنیادی فیزیک است.",
         "صفر مطلق برابر با منفی ۲۷۳٫۱۵ درجه سلسیوس است و رسیدن کامل به آن از نظر ترمودینامیکی ممکن نیست.",
         "عدد اتمی هر عنصر برابر با تعداد پروتون‌های هسته اتم آن عنصر است.",
-        "الکترون بار الکتریکی منفی و پروتون بار الکتریکی مثبت دارد.",
+        "الکترون بار الکتریکی منفی و پروتون بار الکتریکی مثبت دارد و این تفاوت در ساختار اتم مهم است.",
         "نوترون در حالت معمول بار الکتریکی خالص ندارد و در هسته بسیاری از اتم‌ها یافت می‌شود.",
-        "سلول واحد بنیادی ساختاری و عملکردی جانداران به شمار می‌رود.",
+        "سلول واحد بنیادی ساختاری و عملکردی جانداران به شمار می‌رود و بسیاری از فرایندهای زیستی در آن انجام می‌شود.",
         "دی‌ان‌ای مولکولی است که اطلاعات ژنتیکی بسیاری از جانداران را ذخیره می‌کند.",
         "ژن بخشی از ماده ژنتیکی است که می‌تواند با یک ویژگی یا عملکرد زیستی ارتباط داشته باشد.",
         "هموگلوبین پروتئینی در گلبول قرمز است که به حمل اکسیژن در خون کمک می‌کند.",
@@ -110,34 +108,34 @@ FALLBACK_BANK: dict[str, tuple[str, ...]] = {
         "کلروفیل رنگدانه‌ای است که در جذب نور مورد استفاده برای فتوسنتز گیاهان نقش دارد.",
         "فتوسنتز فرایندی است که در آن گیاهان و برخی جانداران با استفاده از نور ترکیبات آلی می‌سازند.",
         "نیتروژن فراوان‌ترین گاز موجود در جو خشک زمین است و نزدیک به چهار پنجم آن را تشکیل می‌دهد.",
-        "اکسیژن حدود یک پنجم حجم هوای خشک زمین را تشکیل می‌دهد.",
+        "اکسیژن حدود یک پنجم حجم هوای خشک زمین را تشکیل می‌دهد و برای تنفس هوازی بسیاری از جانداران مهم است.",
         "قانون دوم نیوتن رابطه میان نیرو، جرم و شتاب را بیان می‌کند و به صورت F=ma شناخته می‌شود.",
-        "انرژی جنبشی یک جسم با جرم و مربع سرعت آن ارتباط دارد.",
+        "انرژی جنبشی یک جسم با جرم و مربع سرعت آن ارتباط دارد و با افزایش سرعت رشد زیادی می‌کند.",
         "فرکانس تعداد چرخه‌های یک پدیده تناوبی در هر ثانیه است و واحد آن هرتز است.",
-        "طول موج فاصله بین دو نقطه هم‌فاز متوالی در یک موج است.",
-        "جمع زاویه‌های داخلی مثلث در هندسه اقلیدسی ۱۸۰ درجه است.",
+        "طول موج فاصله بین دو نقطه هم‌فاز متوالی در یک موج است و با فرکانس رابطه دارد.",
+        "جمع زاویه‌های داخلی مثلث در هندسه اقلیدسی ۱۸۰ درجه است و یکی از نتایج پایه هندسه محسوب می‌شود.",
         "باکتری‌ها جانداران تک‌یاخته‌ای هستند و سلول آن‌ها هسته غشادار ندارد.",
     ),
     "technology": (
         "پردازنده مرکزی رایانه دستورهای برنامه را اجرا می‌کند و عملیات منطقی و محاسباتی را انجام می‌دهد.",
         "حافظه رم محل نگهداری موقت داده‌ها و برنامه‌هایی است که رایانه در حال استفاده از آن‌هاست.",
-        "حافظه‌های اس‌اس‌دی از تراشه‌های حافظه فلش استفاده می‌کنند و برخلاف هارددیسک قطعه مکانیکی چرخان ندارند.",
+        "حافظه‌های اس‌اس‌دی از تراشه‌های حافظه فلش استفاده می‌کنند و قطعه مکانیکی چرخان ندارند.",
         "بیت کوچک‌ترین واحد رایج اطلاعات در رایانش است و می‌تواند مقدار صفر یا یک داشته باشد.",
         "هشت بیت یک بایت را تشکیل می‌دهد و بایت برای نمایش بسیاری از داده‌های دیجیتال استفاده می‌شود.",
-        "سیستم‌عامل میان سخت‌افزار رایانه و برنامه‌های کاربردی هماهنگی ایجاد می‌کند.",
+        "سیستم‌عامل میان سخت‌افزار رایانه و برنامه‌های کاربردی هماهنگی ایجاد می‌کند و منابع دستگاه را مدیریت می‌کند.",
         "مرورگر وب برنامه‌ای است که برای دریافت و نمایش صفحات و برنامه‌های وب استفاده می‌شود.",
-        "پروتکل اچ‌تی‌تی‌پی برای انتقال درخواست و پاسخ در وب به کار می‌رود.",
+        "پروتکل اچ‌تی‌تی‌پی برای انتقال درخواست و پاسخ در وب به کار می‌رود و پایه بسیاری از ارتباطات وب است.",
         "اچ‌تی‌تی‌پی‌اس نسخه‌ای امن‌تر از ارتباط وب است که از رمزنگاری ارتباط استفاده می‌کند.",
-        "DNS نام دامنه را به اطلاعات لازم برای پیدا کردن مقصد شبکه ترجمه می‌کند.",
+        "دی‌ان‌اس نام دامنه را به اطلاعات لازم برای پیدا کردن مقصد شبکه ترجمه می‌کند.",
         "آدرس آی‌پی برای شناسایی یک رابط شبکه در یک محدوده شبکه‌ای استفاده می‌شود.",
         "الگوریتم مجموعه‌ای مرحله‌به‌مرحله از دستورها برای حل مسئله یا پردازش داده است.",
         "یادگیری ماشین شاخه‌ای از هوش مصنوعی است که در آن مدل‌ها از داده برای یادگیری الگو استفاده می‌کنند.",
         "شبکه عصبی مصنوعی ساختاری محاسباتی است که از واحدهایی به نام نورون مصنوعی تشکیل می‌شود.",
         "رمزنگاری نامتقارن از یک جفت کلید عمومی و خصوصی برای عملیات رمزنگاری یا امضای دیجیتال استفاده می‌کند.",
         "کد کیوآر می‌تواند اطلاعات متنی یا یک نشانی وب را در قالب یک الگوی دوبعدی ذخیره کند.",
-        "گیت نسخه کنترل تغییرات پروژه‌های نرم‌افزاری را ساده می‌کند و امکان ثبت تاریخچه تغییرات را می‌دهد.",
+        "گیت کنترل نسخه تغییرات پروژه‌های نرم‌افزاری را ساده می‌کند و تاریخچه تغییرات را نگه می‌دارد.",
         "پایگاه داده برای ذخیره، جست‌وجو و مدیریت ساختاریافته اطلاعات استفاده می‌شود.",
-        "پایتون یک زبان برنامه‌نویسی سطح بالا است که برای برنامه‌های گوناگون از اسکریپت تا تحلیل داده استفاده می‌شود.",
+        "پایتون یک زبان برنامه‌نویسی سطح بالا است که برای اسکریپت، وب، تحلیل داده و کاربردهای گوناگون استفاده می‌شود.",
         "کامپایلر یا مفسر کد برنامه را به شکلی تبدیل یا اجرا می‌کند که رایانه بتواند آن را پردازش کند.",
     ),
     "nature": (
@@ -202,7 +200,7 @@ FALLBACK_BANK: dict[str, tuple[str, ...]] = {
         "ورزشگاه ومبلی در لندن یکی از شناخته‌شده‌ترین ورزشگاه‌های فوتبال جهان است.",
         "توپ فوتبال مدرن معمولاً از چندین پنل با شکل هندسی مشخص ساخته می‌شود.",
         "وقت اضافه در برخی مسابقات حذفی برای تعیین برنده پس از مساوی شدن در زمان معمول استفاده می‌شود.",
-        "پنالتی از فاصله یازده متری دروازه زده می‌شود.",
+        "پنالتی از فاصله یازده متری دروازه زده می‌شود و ضربه بدون حضور دیوار دفاعی انجام می‌گیرد.",
         "کاپیتان تیم در بسیاری از مسابقات بازوبند مخصوصی روی بازو دارد.",
         "فوتبال به‌عنوان ورزش تیمی به هماهنگی، پاس‌کاری، جای‌گیری و تصمیم‌گیری سریع نیاز دارد.",
     ),
@@ -219,10 +217,10 @@ FALLBACK_BANK: dict[str, tuple[str, ...]] = {
         "گرینلند بزرگ‌ترین جزیره جهان است و بخش زیادی از آن با یخ پوشیده شده است.",
         "دریای خزر بزرگ‌ترین پهنه آبی محصور در خشکی جهان از نظر مساحت است.",
         "اقیانوس اطلس میان قاره‌های آمریکا از یک سو و اروپا و آفریقا از سوی دیگر قرار گرفته است.",
-        "مقیاس سلسیوس یکی از مقیاس‌های رایج برای بیان دما است.",
+        "مقیاس سلسیوس یکی از مقیاس‌های رایج برای بیان دما است و با نقطه انجماد و جوش آب تعریف تاریخی دارد.",
         "سال کبیسه برای هماهنگ نگه داشتن تقویم خورشیدی با طول واقعی سال اعتدالی استفاده می‌شود.",
-        "زمین تقریباً ۲۴ ساعت برای یک چرخش نسبت به خورشید نیاز دارد و همین چرخش سبب پیدایش چرخه شب و روز می‌شود.",
-        "یک سال زمین تقریباً ۳۶۵ روز و حدود ۶ ساعت طول می‌کشد.",
+        "زمین تقریباً ۲۴ ساعت برای یک چرخش نسبت به خورشید نیاز دارد و همین چرخش چرخه شب و روز را ایجاد می‌کند.",
+        "یک سال زمین تقریباً ۳۶۵ روز و حدود ۶ ساعت طول می‌کشد و همین کسری به تقویم کبیسه منجر می‌شود.",
         "طول جغرافیایی برای تعیین موقعیت شرق و غرب یک مکان نسبت به نصف‌النهار مبدأ استفاده می‌شود.",
         "عرض جغرافیایی برای تعیین موقعیت شمال و جنوب یک مکان نسبت به خط استوا استفاده می‌شود.",
         "منطقه زمانی به نواحی‌ای گفته می‌شود که زمان استاندارد مشابه یا نزدیک دارند.",
@@ -267,11 +265,7 @@ def init_db() -> None:
 def remember_user(user_id: int) -> None:
     now = time.time()
     with db() as conn:
-        conn.execute(
-            "INSERT INTO users(user_id,first_seen,last_seen) VALUES(?,?,?) "
-            "ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen",
-            (user_id, now, now),
-        )
+        conn.execute("INSERT INTO users(user_id,first_seen,last_seen) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen", (user_id, now, now))
 
 
 def normalize_fact(text: str) -> str:
@@ -286,23 +280,17 @@ def normalize_fact(text: str) -> str:
 
 
 def fact_key(text: str, source: str = "") -> str:
-    # Source-independent on purpose: the same claim copied from another source
-    # must still count as the same fact for one user.
     return hashlib.sha256(normalize_fact(text).encode("utf-8")).hexdigest()
 
 
 def has_seen(user_id: int, key: str) -> bool:
     with db() as conn:
-        row = conn.execute("SELECT 1 FROM seen_facts WHERE user_id=? AND fact_key=? LIMIT 1", (user_id, key)).fetchone()
-    return row is not None
+        return conn.execute("SELECT 1 FROM seen_facts WHERE user_id=? AND fact_key=? LIMIT 1", (user_id, key)).fetchone() is not None
 
 
 def mark_seen(user_id: int, key: str, source: str, category: str, text: str = "") -> None:
     with db() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO seen_facts(user_id,fact_key,created_at,source,category,text) VALUES(?,?,?,?,?,?)",
-            (user_id, key, time.time(), source, category, clean(text)),
-        )
+        conn.execute("INSERT OR IGNORE INTO seen_facts(user_id,fact_key,created_at,source,category,text) VALUES(?,?,?,?,?,?)", (user_id, key, time.time(), source, category, clean(text)))
 
 
 def seen_count(user_id: int) -> int:
@@ -340,7 +328,7 @@ def is_relevant(text: str, topic: str | None) -> bool:
 
 
 def word_shingles(text: str) -> set[str]:
-    stop = {"است", "در", "از", "به", "با", "برای", "و", "که", "را", "این", "آن", "یک", "های", "می", "شود", "دارد", "دارد"}
+    stop = {"است", "در", "از", "به", "با", "برای", "و", "که", "را", "این", "آن", "یک", "های", "می", "شود", "دارد"}
     return {w for w in normalize_fact(text).split() if len(w) > 1 and w not in stop}
 
 
@@ -360,24 +348,15 @@ def jaccard(a: set[str], b: set[str]) -> float:
 def similarity_score(a: str, b: str) -> float:
     if fact_key(a) == fact_key(b):
         return 1.0
-    wa, wb = word_shingles(a), word_shingles(b)
-    ca, cb = char_shingles(a), char_shingles(b)
-    return max(jaccard(wa, wb), jaccard(ca, cb))
+    return max(jaccard(word_shingles(a), word_shingles(b)), jaccard(char_shingles(a), char_shingles(b)))
 
 
 def is_user_duplicate(user_id: int, text: str) -> bool:
-    key = fact_key(text)
-    if has_seen(user_id, key):
+    if has_seen(user_id, fact_key(text)):
         return True
     with db() as conn:
-        rows = conn.execute(
-            "SELECT text FROM seen_facts WHERE user_id=? AND text!='' ORDER BY created_at DESC LIMIT 750",
-            (user_id,),
-        ).fetchall()
-    for (old_text,) in rows:
-        if similarity_score(text, old_text) >= 0.84:
-            return True
-    return False
+        rows = conn.execute("SELECT text FROM seen_facts WHERE user_id=? AND text!='' ORDER BY created_at DESC LIMIT 750", (user_id,)).fetchall()
+    return any(similarity_score(text, row[0]) >= 0.84 for row in rows)
 
 
 async def get_json(session: aiohttp.ClientSession, url: str, params: dict[str, Any] | None = None) -> Any:
@@ -411,11 +390,7 @@ async def source_wikipedia(session: aiohttp.ClientSession, topic: str | None):
     queries = list(TOPICS.get(topic or "new", TOPICS["new"]))
     random.shuffle(queries)
     for query in queries[:12]:
-        data = await get_json(
-            session,
-            "https://fa.wikipedia.org/w/api.php",
-            {"action":"query","format":"json","generator":"search","gsrsearch":query,"gsrnamespace":0,"gsrlimit":25,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"},
-        )
+        data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {"action":"query","format":"json","generator":"search","gsrsearch":query,"gsrnamespace":0,"gsrlimit":25,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"})
         if not isinstance(data, dict):
             continue
         pages = list(data.get("query", {}).get("pages", {}).values())
@@ -438,11 +413,7 @@ async def source_wikipedia(session: aiohttp.ClientSession, topic: str | None):
 
 async def source_wikipedia_random(session: aiohttp.ClientSession, topic: str | None):
     for _ in range(3):
-        data = await get_json(
-            session,
-            "https://fa.wikipedia.org/w/api.php",
-            {"action":"query","format":"json","generator":"random","grnnamespace":0,"grnlimit":35,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"},
-        )
+        data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {"action":"query","format":"json","generator":"random","grnnamespace":0,"grnlimit":35,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"})
         if not isinstance(data, dict):
             continue
         pages = list(data.get("query", {}).get("pages", {}).values())
@@ -466,11 +437,7 @@ async def source_wikidata_topic(session: aiohttp.ClientSession, topic: str | Non
     queries = list(TOPICS.get(topic, TOPICS["new"]))
     random.shuffle(queries)
     for query in queries[:12]:
-        data = await get_json(
-            session,
-            "https://www.wikidata.org/w/api.php",
-            {"action":"wbsearchentities","search":query,"language":"fa","uselang":"fa","format":"json","limit":25,"type":"item"},
-        )
+        data = await get_json(session, "https://www.wikidata.org/w/api.php", {"action":"wbsearchentities","search":query,"language":"fa","uselang":"fa","format":"json","limit":25,"type":"item"})
         if not isinstance(data, dict):
             continue
         hits = data.get("search", [])
@@ -514,12 +481,8 @@ async def source_nasa(session: aiohttp.ClientSession, topic: str | None):
     return None
 
 
-WORLD_COUNTRIES = {
-    "IRN":"ایران", "FRA":"فرانسه", "DEU":"آلمان", "BRA":"برزیل", "JPN":"ژاپن", "IND":"هند", "CAN":"کانادا", "ESP":"اسپانیا", "ITA":"ایتالیا", "TUR":"ترکیه", "EGY":"مصر", "AUS":"استرالیا", "MEX":"مکزیک", "KOR":"کره جنوبی", "ZAF":"آفریقای جنوبی", "GBR":"بریتانیا", "USA":"ایالات متحده", "NOR":"نروژ", "SWE":"سوئد", "CHN":"چین"
-}
-WORLD_INDICATORS = {
-    "SP.POP.TOTL":"جمعیت", "NY.GDP.MKTP.CD":"تولید ناخالص داخلی", "SP.DYN.LE00.IN":"امید به زندگی", "IT.NET.USER.ZS":"درصد استفاده از اینترنت", "EG.ELC.ACCS.ZS":"درصد دسترسی به برق", "EN.ATM.CO2E.PC":"انتشار سرانه دی‌اکسیدکربن"
-}
+WORLD_COUNTRIES = {"IRN":"ایران","FRA":"فرانسه","DEU":"آلمان","BRA":"برزیل","JPN":"ژاپن","IND":"هند","CAN":"کانادا","ESP":"اسپانیا","ITA":"ایتالیا","TUR":"ترکیه","EGY":"مصر","AUS":"استرالیا","MEX":"مکزیک","KOR":"کره جنوبی","ZAF":"آفریقای جنوبی","GBR":"بریتانیا","USA":"ایالات متحده","NOR":"نروژ","SWE":"سوئد","CHN":"چین"}
+WORLD_INDICATORS = {"SP.POP.TOTL":"جمعیت","NY.GDP.MKTP.CD":"تولید ناخالص داخلی","SP.DYN.LE00.IN":"امید به زندگی","IT.NET.USER.ZS":"درصد استفاده از اینترنت","EG.ELC.ACCS.ZS":"درصد دسترسی به برق","EN.ATM.CO2E.PC":"انتشار سرانه دی‌اکسیدکربن"}
 
 
 async def source_world_bank(session: aiohttp.ClientSession, topic: str | None):
@@ -575,7 +538,6 @@ async def get_new_fact(user_id: int, topic: str | None = None):
     remember_user(user_id)
     if topic not in TOPICS:
         topic = "new"
-
     if topic == "football":
         loaders: list[Callable[..., Awaitable[Any]]] = [source_football]
     else:
@@ -587,9 +549,7 @@ async def get_new_fact(user_id: int, topic: str | None = None):
         if topic in (None, "nature"):
             loaders.append(source_usgs)
 
-    # Every round visits the whole source set rather than repeatedly selecting
-    # one random source. This reduces accidental exhaustion when one API is down.
-    async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent": "AmirFacts/8.0"}) as session:
+    async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent":"AmirFacts/8.0"}) as session:
         for _ in range(12):
             order = list(loaders)
             random.shuffle(order)
@@ -606,8 +566,6 @@ async def get_new_fact(user_id: int, topic: str | None = None):
                     continue
                 return text, category, source, fact_key(text)
 
-    # Offline reserve: topic-local and persistent. This is the hard guarantee
-    # that a source outage does not automatically terminate a category.
     if topic == "new":
         offline_candidates = [(TOPIC_NAMES["new"], text, "بانک پشتیبان دانستنی") for text in FALLBACK_BANK["new"]]
     else:
@@ -620,10 +578,7 @@ async def get_new_fact(user_id: int, topic: str | None = None):
             continue
         return text, category, source, fact_key(text)
 
-    # If the local bank for this user is exhausted, make an aggressive second
-    # live pass before giving up. With the live sources this is intentionally
-    # very hard to reach, but it keeps the failure path explicit.
-    async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent": "AmirFacts/8.0-last-chance"}) as session:
+    async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent":"AmirFacts/8.0-last-chance"}) as session:
         for _ in range(48):
             order = list(loaders)
             random.shuffle(order)
@@ -648,12 +603,7 @@ def allowed(user_id: int) -> bool:
 
 def keyboard() -> types.InlineKeyboardMarkup:
     kb = types.InlineKeyboardMarkup(row_width=2)
-    rows = (
-        (("🎲 فکت جدید", "fact:new"), ("⚽ فوتبال", "fact:football")),
-        (("🌌 فضا", "fact:space"), ("🧠 علم", "fact:science")),
-        (("💻 فناوری", "fact:technology"), ("🌿 طبیعت", "fact:nature")),
-        (("🏛️ تاریخ", "fact:history"), ("🌍 جهان", "fact:world")),
-    )
+    rows = ((("🎲 فکت جدید", "fact:new"), ("⚽ فوتبال", "fact:football")), (("🌌 فضا", "fact:space"), ("🧠 علم", "fact:science")), (("💻 فناوری", "fact:technology"), ("🌿 طبیعت", "fact:nature")), (("🏛️ تاریخ", "fact:history"), ("🌍 جهان", "fact:world")))
     for row in rows:
         kb.add(*[types.InlineKeyboardButton(text, callback_data=data) for text, data in row])
     kb.add(types.InlineKeyboardButton("📊 آمار من", callback_data="stats"))
@@ -684,8 +634,6 @@ async def send_fact(chat_id: int, user_id: int, topic: str | None = None) -> Non
     status = await bot.send_message(chat_id, "🔎 <i>از چند منبع دنبال یک فکت تازه و غیرتکراری می‌گردم...</i>")
     result = await get_new_fact(user_id, topic)
     if not result:
-        # This path should only be reachable after both the local reserve and
-        # aggressive live retry are exhausted. Keep it generic and non-failing.
         await bot.edit_message_text("🔄 فعلاً یک فکت قابل‌اعتماد و کاملاً جدید برای این عنوان پیدا نشد.", chat_id=chat_id, message_id=status.message_id, reply_markup=keyboard())
         return
     text, category, source, key = result
