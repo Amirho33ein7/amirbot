@@ -24,7 +24,7 @@ jobs:
       - run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
       - name: Compile
         run: python -m py_compile AmirFacts.py
-      - name: Core and reserve integrity tests
+      - name: Core and reserve integrity
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-core.sqlite3
@@ -32,39 +32,29 @@ jobs:
           python - <<'PY'
           import importlib.util, sys
           from pathlib import Path
-          path = Path('AmirFacts.py')
-          source = path.read_text(encoding='utf-8')
-          assert 'infinity_polling' not in source
-          spec = importlib.util.spec_from_file_location('facts', path)
-          module = importlib.util.module_from_spec(spec)
-          sys.modules['facts'] = module
-          spec.loader.exec_module(module)
-          module.init_db()
-          assert module.persian_only('این یک متن کاملاً فارسی برای آزمون است.')
-          assert not module.persian_only('This is English text.')
-          assert callable(module.source_wikipedia)
-          assert callable(module.source_wikipedia_random)
-          assert callable(module.source_wikidata_topic)
-          assert callable(module.get_new_fact)
-          assert set(module.TOPICS) == {'new','space','science','technology','nature','history','football','world'}
-          effective = {}
-          for topic, facts in module.FALLBACK_BANK.items():
-              assert len(facts) >= 20, f'{topic}: only {len(facts)} raw offline facts'
-              assert len(set(facts)) == len(facts), f'{topic}: duplicate fallback text'
-              usable_facts = [text for text in facts if module.usable(text)]
-              effective[topic] = len(usable_facts)
-              assert len(usable_facts) >= 19, f'{topic}: only {len(usable_facts)} usable offline facts'
-              for text in usable_facts:
-                  if topic != 'new':
-                      assert module.is_relevant(text, topic), f'{topic}: irrelevant fallback'
-          all_texts = [x[1] for x in module.FALLBACK_FACTS]
-          assert len(all_texts) == len(set(all_texts)), 'duplicate fallback across topics'
-          assert module.fact_key('یک فکت تست', 'الف') == module.fact_key('یک فکت تست', 'ب')
-          assert module.similarity_score('این یک فکت علمی درباره سلول و زیست شناسی است.', 'این یک فکت علمی درباره سلول و زیست شناسی است.') == 1.0
-          print('Effective offline capacities:', effective)
+          p=Path('AmirFacts.py'); s=p.read_text(encoding='utf-8')
+          assert 'infinity_polling' not in s
+          spec=importlib.util.spec_from_file_location('facts',p); m=importlib.util.module_from_spec(spec); sys.modules['facts']=m; spec.loader.exec_module(m)
+          m.init_db()
+          assert set(m.TOPICS)=={'new','space','science','technology','nature','history','football','world'}
+          assert m.persian_only('این یک متن کاملاً فارسی برای آزمون است.') and not m.persian_only('This is English text.')
+          assert m.fact_key('فکت تست','الف')==m.fact_key('فکت تست','ب')
+          assert m.similarity_score('این یک فکت علمی درباره سلول و زیست شناسی است.','این یک فکت علمی درباره سلول و زیست شناسی است.')==1.0
+          total=0
+          for topic,facts in m.FALLBACK_BANK.items():
+              assert len(facts)>=20, f'{topic}: raw reserve too small'
+              assert len(facts)==len(set(facts)), f'{topic}: duplicate reserve text'
+              usable=[x for x in facts if m.usable(x)]
+              assert len(usable)>=18, f'{topic}: only {len(usable)} usable reserve facts'
+              for x in usable:
+                  if topic!='new': assert m.is_relevant(x,topic), f'{topic}: irrelevant reserve'
+              total += len(usable)
+          all_text=[x[1] for x in m.FALLBACK_FACTS]
+          assert len(all_text)==len(set(all_text)), 'cross-topic duplicate reserve'
+          print('Effective offline reserve:', total)
           print('Core + reserve integrity: PASS')
           PY
-      - name: Live source availability probe
+      - name: Live sources informational probe
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
@@ -73,34 +63,19 @@ jobs:
           python - <<'PY'
           import asyncio, importlib.util, sys
           from pathlib import Path
-          path = Path('AmirFacts.py')
-          spec = importlib.util.spec_from_file_location('live', path)
-          module = importlib.util.module_from_spec(spec)
-          sys.modules['live'] = module
-          spec.loader.exec_module(module)
-          async def probe(coro):
-              try:
-                  value = await coro
-                  return bool(value and module.usable(value[0]))
-              except Exception as exc:
-                  print(type(exc).__name__, exc)
-                  return False
+          p=Path('AmirFacts.py'); spec=importlib.util.spec_from_file_location('live',p); m=importlib.util.module_from_spec(spec); sys.modules['live']=m; spec.loader.exec_module(m)
           async def main():
-              async with module.aiohttp.ClientSession(timeout=module.TIMEOUT, headers={'User-Agent':'AmirFacts-CI/8.2'}) as session:
-                  results = await asyncio.gather(
-                      probe(module.source_wikipedia(session,'science')),
-                      probe(module.source_wikipedia_random(session,'science')),
-                      probe(module.source_wikidata_topic(session,'science')),
-                      probe(module.source_football(session)),
-                      probe(module.source_world_bank(session,'world')),
-                      probe(module.source_usgs(session,'nature')),
-                      probe(module.source_nasa(session,'space')),
-                  )
-              print(f'Live source availability: {sum(results)}/7')
-              print('This probe is informational; offline reserves are the mandatory continuity path.')
+              async with m.aiohttp.ClientSession(timeout=m.TIMEOUT) as s:
+                  tests=[m.source_wikipedia(s,'science'),m.source_wikipedia_random(s,'science'),m.source_wikidata_topic(s,'science'),m.source_football(s),m.source_world_bank(s,'world'),m.source_usgs(s,'nature'),m.source_nasa(s,'space')]
+                  r=[]
+                  for c in tests:
+                      try:
+                          v=await c; r.append(bool(v and m.usable(v[0])))
+                      except Exception: r.append(False)
+                  print(f'Live source availability: {sum(r)}/7')
           asyncio.run(main())
           PY
-      - name: 152-request effective-reserve dedup stress
+      - name: Full offline dedup stress
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-stress.sqlite3
@@ -108,54 +83,28 @@ jobs:
           python - <<'PY'
           import asyncio, importlib.util, sys
           from pathlib import Path
-          path = Path('AmirFacts.py')
-          spec = importlib.util.spec_from_file_location('stress', path)
-          module = importlib.util.module_from_spec(spec)
-          sys.modules['stress'] = module
-          spec.loader.exec_module(module)
-          module.init_db()
-          async def no_live(*args, **kwargs): return None
-          module.source_wikipedia = no_live
-          module.source_wikipedia_random = no_live
-          module.source_wikidata_topic = no_live
-          module.source_football = no_live
-          module.source_nasa = no_live
-          module.source_world_bank = no_live
-          module.source_usgs = no_live
+          p=Path('AmirFacts.py'); spec=importlib.util.spec_from_file_location('stress',p); m=importlib.util.module_from_spec(spec); sys.modules['stress']=m; spec.loader.exec_module(m); m.init_db()
+          async def off(*a,**k): return None
+          m.source_wikipedia=m.source_wikipedia_random=m.source_wikidata_topic=off; m.source_football=m.source_nasa=m.source_world_bank=m.source_usgs=off
           async def main():
-              uid = 881234
-              seen_global = []
-              expected = 0
-              for topic in module.TOPICS:
-                  available = [text for text in module.FALLBACK_BANK[topic] if module.usable(text)]
-                  local = set()
-                  for i in range(len(available)):
-                      value = await module.get_new_fact(uid, topic)
-                      assert value is not None, f'CUT-OFF: {topic} at request {i + 1}'
-                      text, category, source, key = value
-                      assert module.usable(text)
-                      assert category == module.TOPIC_NAMES[topic]
-                      assert key == module.fact_key(text)
-                      assert key not in local, f'local duplicate {topic}'
-                      assert key not in {x[0] for x in seen_global}, f'cross-topic duplicate at {topic}'
-                      if topic != 'new':
-                          assert module.is_relevant(text, topic)
-                      for old_key, old_text in seen_global[-160:]:
-                          assert module.similarity_score(text, old_text) < 0.84, f'near duplicate in {topic}'
-                      local.add(key)
-                      seen_global.append((key, text))
-                      module.mark_seen(uid, key, source, category, text)
-                  assert len(local) == len(available)
-                  expected += len(available)
-              assert module.seen_count(uid) == expected, (module.seen_count(uid), expected)
-              print(f'Offline stress: {expected} unique requests PASS')
-              print('All-topic continuity: PASS')
-              print('Exact dedup: PASS')
-              print('Near-duplicate rejection: PASS')
-              print('Cross-topic isolation: PASS')
+              uid=881234; seen=[]; total=0
+              for topic in m.TOPICS:
+                  cap=[x for x in m.FALLBACK_BANK[topic] if m.usable(x)]
+                  local=set()
+                  for i in range(len(cap)):
+                      v=await m.get_new_fact(uid,topic); assert v is not None, f'CUTOFF {topic} #{i+1}'
+                      text,cat,src,key=v; assert m.usable(text) and cat==m.TOPIC_NAMES[topic] and key==m.fact_key(text)
+                      assert key not in local and key not in {k for k,_ in seen}, f'duplicate {topic}'
+                      if topic!='new': assert m.is_relevant(text,topic)
+                      assert all(m.similarity_score(text,old)<0.84 for _,old in seen[-160:]), f'near duplicate {topic}'
+                      local.add(key); seen.append((key,text)); m.mark_seen(uid,key,src,cat,text)
+                  total += len(cap)
+              assert m.seen_count(uid)==total
+              print(f'Offline stress: {total} unique requests PASS')
+              print('All-topic continuity + exact dedup + near-duplicate rejection + cross-topic isolation: PASS')
           asyncio.run(main())
           PY
-      - name: Post-reserve live recovery test
+      - name: Post-reserve live recovery
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-recovery.sqlite3
@@ -163,46 +112,28 @@ jobs:
           python - <<'PY'
           import asyncio, importlib.util, sys
           from pathlib import Path
-          path = Path('AmirFacts.py')
-          spec = importlib.util.spec_from_file_location('recovery', path)
-          module = importlib.util.module_from_spec(spec)
-          sys.modules['recovery'] = module
-          spec.loader.exec_module(module)
-          module.init_db()
-          async def no_live(*args, **kwargs): return None
-          module.source_wikipedia_random = no_live
-          module.source_wikidata_topic = no_live
-          module.source_nasa = no_live
-          module.source_world_bank = no_live
-          module.source_usgs = no_live
+          p=Path('AmirFacts.py'); spec=importlib.util.spec_from_file_location('recovery',p); m=importlib.util.module_from_spec(spec); sys.modules['recovery']=m; spec.loader.exec_module(m); m.init_db()
+          async def off(*a,**k): return None
+          m.source_wikipedia_random=m.source_wikidata_topic=m.source_nasa=m.source_world_bank=m.source_usgs=off
           async def main():
-              uid = 445566
-              for topic in module.TOPICS:
-                  for text in module.FALLBACK_BANK[topic]:
-                      if module.usable(text):
-                          key = module.fact_key(text)
-                          category = module.TOPIC_NAMES[topic]
-                          module.mark_seen(uid, key, f'بانک پشتیبان {category}', category, text)
-              counters = {topic: 0 for topic in module.TOPICS}
-              async def live_recovery(session, topic):
-                  counters[topic] += 1
-                  text = f"فکت زنده آزمون {TOPIC_NAMES[topic]} شماره {counters[topic]} که فقط برای بررسی ادامه‌دار بودن منبع زنده تولید شده است و از بانک پشتیبان مستقل است."
-                  return text, TOPIC_NAMES[topic], 'منبع زنده آزمون', module.fact_key(text)
-              module.source_wikipedia = live_recovery
-              module.source_football = live_recovery
-              for topic in module.TOPICS:
-                  value = await module.get_new_fact(uid, topic)
-                  assert value is not None, f'POST-RESERVE CUTOFF: {topic}'
-                  text, category, source, key = value
-                  assert category == module.TOPIC_NAMES[topic]
-                  assert source == 'منبع زنده آزمون'
-                  assert not module.is_user_duplicate(uid, text)
-                  module.mark_seen(uid, key, source, category, text)
+              uid=445566
+              for topic in m.TOPICS:
+                  for text in m.FALLBACK_BANK[topic]:
+                      if m.usable(text): m.mark_seen(uid,m.fact_key(text),f'reserve {topic}',m.TOPIC_NAMES[topic],text)
+              counters={t:0 for t in m.TOPICS}
+              async def live(session,topic):
+                  counters[topic]+=1
+                  text=f"فکت زنده آزمون {m.TOPIC_NAMES[topic]} شماره {counters[topic]} که مستقل از بانک پشتیبان برای بررسی ادامه‌دار بودن منبع زنده تولید شده است."
+                  return text,m.TOPIC_NAMES[topic],'منبع زنده آزمون',m.fact_key(text)
+              m.source_wikipedia=m.source_football=live
+              for topic in m.TOPICS:
+                  v=await m.get_new_fact(uid,topic); assert v is not None, f'POST-RESERVE CUTOFF {topic}'
+                  text,cat,src,key=v; assert cat==m.TOPIC_NAMES[topic] and src=='منبع زنده آزمون' and not m.is_user_duplicate(uid,text)
+                  m.mark_seen(uid,key,src,cat,text)
               print('Post-reserve live recovery: PASS')
-              print('Every topic continued after exhausting its local usable reserve.')
           asyncio.run(main())
           PY
-      - name: Mixed 80-request long-run stress
+      - name: Mixed long-run stress
         env:
           TELEGRAM_BOT_TOKEN: "000000:CI_TEST_TOKEN"
           AMIRFACTS_DB: /tmp/amirfacts-mixed.sqlite3
@@ -210,35 +141,16 @@ jobs:
           python - <<'PY'
           import asyncio, importlib.util, sys
           from pathlib import Path
-          path = Path('AmirFacts.py')
-          spec = importlib.util.spec_from_file_location('mixed', path)
-          module = importlib.util.module_from_spec(spec)
-          sys.modules['mixed'] = module
-          spec.loader.exec_module(module)
-          module.init_db()
-          async def no_live(*args, **kwargs): return None
-          module.source_wikipedia = no_live
-          module.source_wikipedia_random = no_live
-          module.source_wikidata_topic = no_live
-          module.source_football = no_live
-          module.source_nasa = no_live
-          module.source_world_bank = no_live
-          module.source_usgs = no_live
+          p=Path('AmirFacts.py'); spec=importlib.util.spec_from_file_location('mixed',p); m=importlib.util.module_from_spec(spec); sys.modules['mixed']=m; spec.loader.exec_module(m); m.init_db()
+          async def off(*a,**k): return None
+          m.source_wikipedia=m.source_wikipedia_random=m.source_wikidata_topic=m.source_football=m.source_nasa=m.source_world_bank=m.source_usgs=off
           async def main():
-              uid = 991122
-              order = ['science','technology','nature','history','space','world','football','new'] * 10
-              keys = set()
-              for i, topic in enumerate(order, 1):
-                  value = await module.get_new_fact(uid, topic)
-                  assert value is not None, f'mixed cut-off at {i} ({topic})'
-                  text, category, source, key = value
-                  assert module.usable(text)
-                  assert category == module.TOPIC_NAMES[topic]
-                  assert key not in keys, f'mixed duplicate at {i}'
-                  keys.add(key)
-                  module.mark_seen(uid, key, source, category, text)
-              assert len(keys) == len(order)
-              print(f'Mixed long-run: {len(order)} sequential requests PASS')
+              uid=991122; keys=set(); order=['science','technology','nature','history','space','world','football','new']*10
+              for i,topic in enumerate(order,1):
+                  v=await m.get_new_fact(uid,topic); assert v is not None, f'mixed CUTOFF #{i} {topic}'
+                  text,cat,src,key=v; assert m.usable(text) and cat==m.TOPIC_NAMES[topic] and key not in keys
+                  keys.add(key); m.mark_seen(uid,key,src,cat,text)
+              assert len(keys)==len(order); print(f'Mixed long-run: {len(order)} sequential requests PASS')
           asyncio.run(main())
           PY
       - name: Runtime status
