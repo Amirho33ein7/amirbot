@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """AmirFacts — Persian multi-source fact bot.
 
-Runtime polling is intentionally OFF. The source engine is designed for a
-large, continuously refreshed fact pool with persistent per-user deduplication.
+Runtime polling is intentionally OFF. The source engine uses live sources
+plus a large verified-style local reserve and persistent per-user deduplication.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ COOLDOWN = 2.0
 TOPICS: dict[str, tuple[str, ...]] = {
     "new": ("دانستنی", "اختراع", "کشف", "علم", "دانشمند", "تاریخ علم", "فرهنگ", "جهان"),
     "space": ("فضا", "سیاره", "کهکشان", "ستاره", "ماه", "مریخ", "زمین", "خورشید", "نجوم", "کیهان", "سیارک", "سحابی", "آسمان"),
-    "science": ("فیزیک", "شیمی", "زیست", "مغز", "ژنتیک", "سلول", "اتم", "مولکول", "زیست شناسی", "پزشکی", "ریاضی", "آزمایش", "ماده", "انرژی"),
+    "science": ("فیزیک", "شیمی", "زیست", "مغز", "ژنتیک", "سلول", "اتم", "مولکول", "زیست شناسی", "پزشکی", "ریاضی", "آزمایش", "ماده", "انرژی", "نجوم", "حافظه", "اعصاب"),
     "technology": ("رایانه", "اینترنت", "هوش مصنوعی", "فناوری", "برنامه نویسی", "شبکه", "پردازنده", "نرم افزار", "سخت افزار", "ربات", "داده", "الگوریتم", "رمزنگاری"),
     "nature": ("حیوانات", "اقیانوس", "طبیعت", "گیاه", "جانور", "پرندگان", "پستانداران", "دریا", "جنگل", "زیست بوم", "زمین شناسی", "اقلیم", "حشرات"),
     "history": ("تاریخ", "تمدن", "باستان", "اختراع", "اکتشاف", "امپراتوری", "پادشاه", "جنگ", "باستان شناسی", "فرهنگ", "ایران باستان", "موزه", "سلسله"),
@@ -41,7 +41,7 @@ TOPICS: dict[str, tuple[str, ...]] = {
 TOPIC_NAMES = {"new":"دانستنی", "space":"فضا", "science":"علم", "technology":"فناوری", "nature":"طبیعت", "history":"تاریخ", "football":"فوتبال", "world":"جهان"}
 TOPIC_SIGNALS = {
     "space": ("فضا", "سیاره", "کهکشان", "ستاره", "ماه", "مریخ", "خورشید", "نجوم", "کیهان", "سیارک", "سحابی", "زمین", "مدار"),
-    "science": ("علم", "فیزیک", "شیمی", "زیست", "سلول", "ژن", "مغز", "اتم", "مولکول", "پزشکی", "ریاضی", "آزمایش", "ماده", "انرژی"),
+    "science": ("علم", "فیزیک", "شیمی", "زیست", "سلول", "ژن", "مغز", "اتم", "مولکول", "پزشکی", "ریاضی", "آزمایش", "ماده", "انرژی", "اعصاب", "حافظه"),
     "technology": ("رایانه", "اینترنت", "هوش مصنوعی", "فناوری", "برنامه نویسی", "شبکه", "پردازنده", "نرم افزار", "سخت افزار", "ربات", "داده", "الگوریتم", "رمزنگاری"),
     "nature": ("حیوان", "جانور", "گیاه", "اقیانوس", "دریا", "جنگل", "اقلیم", "زیست بوم", "پرنده", "پستاندار", "زمین شناسی", "طبیعت", "حشرات"),
     "history": ("تاریخ", "تمدن", "باستان", "امپراتوری", "پادشاه", "جنگ", "باستان شناسی", "ایران باستان", "موزه", "فرهنگ", "سلسله"),
@@ -49,13 +49,66 @@ TOPIC_SIGNALS = {
     "world": ("جمعیت", "کشور", "اقتصاد", "تولید ناخالص", "انرژی", "اینترنت", "سلامت", "آموزش", "آب", "جهان", "آمار"),
 }
 
-FALLBACK_FACTS = (
-    ("علم", "نور خورشید حدود ۸ دقیقه و ۲۰ ثانیه طول می‌کشد تا از خورشید به زمین برسد.", "بانک پشتیبان علمی"),
-    ("علم", "اختلاف زمان دریافت نور خورشید و مشاهده آن از زمین به دلیل فاصله بسیار زیاد خورشید از زمین است.", "بانک پشتیبان علمی"),
-    ("طبیعت", "اختاپوس سه قلب دارد و خون آن به دلیل وجود هموسیانین رنگی متمایل به آبی دارد.", "بانک پشتیبان طبیعت"),
+SCIENCE_FALLBACKS = (
+    "سرعت نور در خلأ دقیقاً برابر با ۲۹۹۷۹۲۴۵۸ متر بر ثانیه تعریف شده است و یکی از ثابت‌های بنیادی فیزیک است.",
+    "دماهای کمتر از صفر مطلق از نظر ترمودینامیکی دست‌نیافتنی هستند و صفر مطلق برابر با منفی ۲۷۳٫۱۵ درجه سلسیوس است.",
+    "آب در فشار معمولی در دمای صفر درجه سلسیوس یخ می‌زند و در دمای صد درجه سلسیوس به جوش می‌آید.",
+    "بیشترین چگالی آب خالص در فشار معمولی نزدیک دمای چهار درجه سلسیوس رخ می‌دهد.",
+    "صدا برای انتشار به محیط مادی نیاز دارد و در خلأ نمی‌تواند مانند نور حرکت کند.",
+    "اتم از هسته و الکترون‌ها تشکیل شده است و هسته شامل پروتون و نوترون است.",
+    "عدد اتمی هر عنصر برابر با تعداد پروتون‌های موجود در هسته اتم آن عنصر است.",
+    "الکترون دارای بار الکتریکی منفی است و پروتون بار الکتریکی مثبت دارد.",
+    "نوترون در حالت آزاد بار الکتریکی خالص ندارد و جرم آن نزدیک به جرم پروتون است.",
+    "سلول واحد بنیادی ساختاری و عملکردی جانداران به شمار می‌رود.",
+    "گلبول‌های قرمز بالغ انسان در حالت معمول هسته سلولی ندارند و برای حمل اکسیژن تخصص یافته‌اند.",
+    "هموگلوبین در گلبول قرمز پروتئینی است که به انتقال اکسیژن در خون کمک می‌کند.",
+    "دستگاه عصبی انسان از مغز، نخاع و شبکه‌ای گسترده از اعصاب تشکیل شده است.",
+    "مغز انسان بخش‌های تخصصی گوناگونی دارد که در حرکت، زبان، حافظه و پردازش حسی نقش دارند.",
+    "دی‌ان‌ای مولکولی است که اطلاعات ژنتیکی بسیاری از جانداران را در خود ذخیره می‌کند.",
+    "ژن بخشی از ماده ژنتیکی است که اطلاعاتی مرتبط با یک ویژگی یا عملکرد زیستی را در خود دارد.",
+    "همه یاخته‌های بدن انسان از یک یاخته آغازین به نام یاخته تخم در فرایند رشد ایجاد می‌شوند.",
+    "میتوکندری در بیشتر یاخته‌های یوکاریوتی در تولید انرژی شیمیایی قابل استفاده نقش مهمی دارد.",
+    "کلروفیل رنگدانه سبزی است که در جذب نور برای فتوسنتز گیاهان نقش دارد.",
+    "فتوسنتز فرایندی است که طی آن گیاهان و برخی جانداران از نور برای ساخت ترکیبات آلی استفاده می‌کنند.",
+    "کربن یکی از عناصر اصلی سازنده بسیاری از مولکول‌های زیستی مانند پروتئین‌ها، چربی‌ها و قندها است.",
+    "اکسیژن حدود یک پنجم حجم هوای خشک زمین را تشکیل می‌دهد.",
+    "نیتروژن فراوان‌ترین گاز موجود در جو زمین است و حدود چهار پنجم هوای خشک را تشکیل می‌دهد.",
+    "قانون دوم نیوتن رابطه‌ای میان نیرو، جرم و شتاب برقرار می‌کند و معمولاً به صورت نیرو برابر جرم ضربدر شتاب نوشته می‌شود.",
+    "گرانش نزدیک سطح زمین باعث شتابی در حدود ۹٫۸ متر بر مجذور ثانیه برای اجسام در سقوط آزاد می‌شود.",
+    "انرژی جنبشی یک جسم به جرم و سرعت آن وابسته است و با مربع سرعت تغییر می‌کند.",
+    "انرژی پتانسیل گرانشی جسم نزدیک سطح زمین به جرم، شتاب گرانش و ارتفاع وابسته است.",
+    "فرکانس موج تعداد چرخه‌های کامل آن موج در هر ثانیه است و واحد آن هرتز نام دارد.",
+    "طول موج فاصله میان دو نقطه هم‌فاز متوالی در یک موج مانند دو قله متوالی است.",
+    "دوره زمانی موج مدت لازم برای انجام یک چرخه کامل است و با فرکانس رابطه معکوس دارد.",
+    "ریاضیات عدد پی را نسبت محیط دایره به قطر آن تعریف می‌کند و مقدار تقریبی آن ۳٫۱۴۱۵۹ است.",
+    "مجموع زاویه‌های داخلی هر مثلث در هندسه اقلیدسی برابر با ۱۸۰ درجه است.",
+    "عدد صفر هم به عنوان عدد صحیح و هم به عنوان عنصر خنثی جمع در دستگاه اعداد استفاده می‌شود.",
+    "جدول تناوبی عناصر را بر اساس ویژگی‌های اتمی و عدد اتمی مرتب می‌کند.",
+    "هیدروژن سبک‌ترین عنصر شیمیایی و نخستین عنصر جدول تناوبی است.",
+    "هلیم گازی نجیب و بسیار کم‌واکنش است و چگالی آن از بسیاری از گازهای موجود در هوا کمتر است.",
+    "آب از دو اتم هیدروژن و یک اتم اکسیژن تشکیل شده است و فرمول شیمیایی آن اچ‌دو‌او است.",
+    "نمک خوراکی معمولاً از ترکیب یون‌های سدیم و کلرید تشکیل شده است.",
+    "اسیدها در محلول آبی می‌توانند غلظت یون هیدروژن را افزایش دهند و بازها رفتار شیمیایی متفاوتی دارند.",
+    "تغییر حالت ماده از جامد به مایع ذوب شدن و از مایع به جامد انجماد نام دارد.",
+    "تبخیر می‌تواند از سطح مایع در دماهای مختلف رخ دهد و جوشیدن با تشکیل حباب در سراسر مایع همراه است.",
+    "نقطه جوش یک ماده به فشار محیط وابسته است و با کاهش فشار می‌تواند کاهش پیدا کند.",
+    "میکروسکوپ نوری برای مشاهده ساختارهای کوچک با استفاده از نور مرئی و عدسی‌ها به کار می‌رود.",
+    "باکتری‌ها جانداران تک‌یاخته‌ای هستند که ساختار سلولی ساده‌تری از یاخته‌های یوکاریوتی دارند.",
+    "ویروس‌ها برای تکثیر به سلول میزبان وابسته‌اند و از ساختارهای سلولی مستقل برخوردار نیستند.",
+    "پادتن‌ها پروتئین‌هایی از دستگاه ایمنی هستند که می‌توانند به مولکول‌های مشخصی متصل شوند.",
+    "واکسیناسیون با آموزش دستگاه ایمنی به شناسایی یک عامل بیماری‌زا می‌تواند به ایجاد حفاظت کمک کند.",
+    "مواد رسانا مانند فلزات معمولاً اجازه عبور جریان الکتریکی را آسان‌تر از مواد عایق می‌دهند.",
+    "مقاومت الکتریکی نشان می‌دهد عبور جریان از یک ماده تا چه اندازه با مخالفت روبه‌رو است.",
+    "باتری می‌تواند انرژی شیمیایی را به انرژی الکتریکی قابل استفاده در یک مدار تبدیل کند.",
+    "آهنربا دو قطب اصلی دارد و قطب‌های هم‌نام یکدیگر را دفع و قطب‌های ناهم‌نام یکدیگر را جذب می‌کنند.",
+    "میدان مغناطیسی در اطراف آهنرباها و جریان‌های الکتریکی ایجاد می‌شود و بر برخی مواد و بارهای متحرک اثر می‌گذارد.",
+)
+
+FALLBACK_FACTS = tuple(("علم", text, "بانک پشتیبان علمی") for text in SCIENCE_FALLBACKS) + (
+    ("طبیعت", "اختاپوس سه قلب دارد و خون آن به دلیل وجود هموسیانین متمایل به آبی است.", "بانک پشتیبان طبیعت"),
     ("فضا", "یک شبانه‌روز خورشیدی روی عطارد حدود ۱۷۶ روز زمینی طول می‌کشد.", "بانک پشتیبان فضا"),
     ("تاریخ", "واژه الگوریتم از نام محمد بن موسی خوارزمی، دانشمند ایرانی، گرفته شده است.", "بانک پشتیبان تاریخ علم"),
-    ("فناوری", "رایانه‌های الکترونیکی نخستین بسیار بزرگ بودند و برای نگهداری آنها به فضای بسیار زیادی نیاز بود.", "بانک پشتیبان فناوری"),
+    ("فناوری", "رایانه‌های الکترونیکی نخستین بسیار بزرگ بودند و برای نگهداری آنها به فضای زیادی نیاز بود.", "بانک پشتیبان فناوری"),
     ("فوتبال", "نخستین دوره جام جهانی فوتبال در سال ۱۹۳۰ در اروگوئه برگزار شد و تیم میزبان قهرمان شد.", "بانک پشتیبان فوتبال"),
     ("فوتبال", "پله تنها بازیکنی است که سه بار قهرمان جام جهانی فوتبال شده است.", "بانک پشتیبان فوتبال"),
 )
@@ -102,7 +155,6 @@ def normalize_fact(text: str) -> str:
 
 
 def fact_key(text: str, source: str = "") -> str:
-    # Deliberately source-independent: the same sentence from another source is still a duplicate.
     return hashlib.sha256(normalize_fact(text).encode("utf-8")).hexdigest()
 
 
@@ -153,8 +205,6 @@ def is_relevant(text: str, topic: str | None) -> bool:
 
 def shingle_similarity(a: str, b: str) -> float:
     na, nb = normalize_fact(a), normalize_fact(b)
-    if not na or not nb:
-        return 0.0
     wa, wb = set(na.split()), set(nb.split())
     if not wa or not wb:
         return 0.0
@@ -166,7 +216,7 @@ def is_user_duplicate(user_id: int, text: str) -> bool:
     if has_seen(user_id, key):
         return True
     with db() as conn:
-        rows = conn.execute("SELECT text FROM seen_facts WHERE user_id=? AND text!='' ORDER BY created_at DESC LIMIT 400", (user_id,)).fetchall()
+        rows = conn.execute("SELECT text FROM seen_facts WHERE user_id=? AND text!='' ORDER BY created_at DESC LIMIT 500", (user_id,)).fetchall()
     return any(shingle_similarity(text, row[0]) >= 0.78 for row in rows)
 
 
@@ -201,11 +251,7 @@ async def source_wikipedia(session: aiohttp.ClientSession, topic: str | None):
     queries = list(TOPICS.get(topic or "new", TOPICS["new"]))
     random.shuffle(queries)
     for query in queries[:10]:
-        data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {
-            "action":"query", "format":"json", "generator":"search", "gsrsearch":query,
-            "gsrnamespace":0, "gsrlimit":25, "prop":"extracts|info", "exintro":1,
-            "explaintext":1, "inprop":"url"
-        })
+        data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {"action":"query","format":"json","generator":"search","gsrsearch":query,"gsrnamespace":0,"gsrlimit":25,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"})
         if not isinstance(data, dict):
             continue
         pages = list(data.get("query", {}).get("pages", {}).values())
@@ -227,10 +273,7 @@ async def source_wikipedia(session: aiohttp.ClientSession, topic: str | None):
 
 
 async def source_wikipedia_random(session: aiohttp.ClientSession, topic: str | None):
-    data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {
-        "action":"query", "format":"json", "generator":"random", "grnnamespace":0,
-        "grnlimit":35, "prop":"extracts|info", "exintro":1, "explaintext":1, "inprop":"url"
-    })
+    data = await get_json(session, "https://fa.wikipedia.org/w/api.php", {"action":"query","format":"json","generator":"random","grnnamespace":0,"grnlimit":35,"prop":"extracts|info","exintro":1,"explaintext":1,"inprop":"url"})
     if not isinstance(data, dict):
         return None
     pages = list(data.get("query", {}).get("pages", {}).values())
@@ -250,15 +293,11 @@ async def source_wikipedia_random(session: aiohttp.ClientSession, topic: str | N
 
 
 async def source_wikidata_topic(session: aiohttp.ClientSession, topic: str | None):
-    if topic is None:
-        topic = "new"
+    topic = topic or "new"
     queries = list(TOPICS.get(topic, TOPICS["new"]))
     random.shuffle(queries)
     for query in queries[:10]:
-        data = await get_json(session, "https://www.wikidata.org/w/api.php", {
-            "action":"wbsearchentities", "search":query, "language":"fa", "uselang":"fa",
-            "format":"json", "limit":25, "type":"item"
-        })
+        data = await get_json(session, "https://www.wikidata.org/w/api.php", {"action":"wbsearchentities","search":query,"language":"fa","uselang":"fa","format":"json","limit":25,"type":"item"})
         if not isinstance(data, dict):
             continue
         hits = data.get("search", [])
@@ -266,8 +305,7 @@ async def source_wikidata_topic(session: aiohttp.ClientSession, topic: str | Non
         for hit in hits:
             label = clean(str(hit.get("label", "")))
             desc = clean(str(hit.get("description", "")))
-            qid = str(hit.get("id", ""))
-            if not (qid and label and desc):
+            if not (label and desc):
                 continue
             text = clean(f"در موضوع {TOPIC_NAMES.get(topic, 'دانستنی')}، «{label}» {desc} است.")
             if usable(text) and is_relevant(text, topic):
@@ -276,10 +314,11 @@ async def source_wikidata_topic(session: aiohttp.ClientSession, topic: str | Non
 
 
 async def source_football(session: aiohttp.ClientSession):
-    candidates = [source_wikipedia, source_wikipedia_random, source_wikidata_topic]
-    random.shuffle(candidates)
-    for loader in candidates:
-        value = await loader(session, "football")
+    for loader in (source_wikipedia, source_wikipedia_random, source_wikidata_topic):
+        try:
+            value = await loader(session, "football")
+        except Exception:
+            value = None
         if value and value[1] == "فوتبال" and usable(value[0]) and is_relevant(value[0], "football"):
             return value[0], "فوتبال", value[2] + " — فوتبال", value[3]
     return None
@@ -344,24 +383,21 @@ async def source_usgs(session: aiohttp.ClientSession, topic: str | None):
     return (text,"طبیعت","سازمان زمین‌شناسی آمریکا",fact_key(text)) if usable(text) else None
 
 
-async def candidate_loaders(topic: str | None) -> list[Callable[[aiohttp.ClientSession, str | None], Awaitable[Any]]]:
-    loaders: list[Callable[[aiohttp.ClientSession, str | None], Awaitable[Any]]] = [source_wikipedia, source_wikipedia_random, source_wikidata_topic]
-    if topic in (None, "space"):
-        loaders.append(source_nasa)
-    if topic in (None, "world"):
-        loaders.append(source_world_bank)
-    if topic in (None, "nature"):
-        loaders.append(source_usgs)
-    if topic == "football":
-        loaders = [source_football]
-    return loaders
-
-
 async def get_new_fact(user_id: int, topic: str | None = None):
     remember_user(user_id)
-    loaders = await candidate_loaders(topic)
-    async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent":"AmirFacts/6.0"}) as session:
-        for _ in range(24):
+    if topic == "football":
+        loaders: list[Callable[..., Awaitable[Any]]] = [source_football]
+    else:
+        loaders = [source_wikipedia, source_wikipedia_random, source_wikidata_topic]
+        if topic in (None, "space"):
+            loaders.append(source_nasa)
+        if topic in (None, "world"):
+            loaders.append(source_world_bank)
+        if topic in (None, "nature"):
+            loaders.append(source_usgs)
+
+    async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent":"AmirFacts/7.0"}) as session:
+        for _ in range(30):
             loader = random.choice(loaders)
             try:
                 value = await loader(session, topic)
@@ -369,7 +405,7 @@ async def get_new_fact(user_id: int, topic: str | None = None):
                 value = None
             if not value:
                 continue
-            text, category, source, key = value
+            text, category, source, _ = value
             if category != TOPIC_NAMES.get(topic, category):
                 continue
             if not usable(text) or not is_relevant(text, topic):
@@ -378,7 +414,6 @@ async def get_new_fact(user_id: int, topic: str | None = None):
                 continue
             return text, category, source, fact_key(text)
 
-    # Finite local reserve is only a last resort when live sources fail.
     pool = list(FALLBACK_FACTS)
     random.shuffle(pool)
     for category, text, source in pool:
@@ -435,7 +470,7 @@ async def send_fact(chat_id: int, user_id: int, topic: str | None = None) -> Non
     status = await bot.send_message(chat_id, "🔎 <i>از چند منبع دنبال یک فکت تازه و غیرتکراری می‌گردم...</i>")
     result = await get_new_fact(user_id, topic)
     if not result:
-        await bot.edit_message_text("🔄 منابع زنده فعلاً پاسخ مناسب ندادند؛ دوباره امتحان کن تا مسیر دیگری از منابع بررسی شود.", chat_id=chat_id, message_id=status.message_id, reply_markup=keyboard())
+        await bot.edit_message_text("🔄 منابع زنده و ذخیره پشتیبان فعلاً مورد جدید کافی ندادند؛ دوباره امتحان کن.", chat_id=chat_id, message_id=status.message_id, reply_markup=keyboard())
         return
     text, category, source, key = result
     if not usable(text) or (topic and category != TOPIC_NAMES[topic]) or is_user_duplicate(user_id, text):
